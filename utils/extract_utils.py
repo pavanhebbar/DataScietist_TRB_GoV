@@ -1,4 +1,10 @@
-"""Python program to extract IFTA relevant data."""
+"""Python program to extract IFTA relevant data.
+
+Things to complete by tonight:
+1. Check for rows where quantities are missing
+2. Resolve into federal and proincial taxes
+
+"""
 
 import io
 import boto3
@@ -163,20 +169,39 @@ def process_images_textractor(image_paths):
 
         if expense_doc.expense_documents:
             exp_data_full = expense_doc.expense_documents[0]
+            summ_dict = []  # Safe initialization for both blocks!
 
             if exp_data_full.summary_fields_list:
-                # Get summary fields
-                summ_dict = []
                 for field in exp_data_full.summary_fields_list:
                     f_type = field.type.text if field.type else ""
+                    f_conf = field.type.confidence if field.type else 0.0
                     f_label = field.key.text if field.key else ""
                     f_value = field.value.text if field.value else ""
                     summ_dict.append({
                         'type' : str(f_type).strip().upper(),
-                        'label': str(f_label).strip(),
-                        'value': str(f_value).strip().lower(),
+                        'conf': float(f_conf),
+                        'label': str(f_label).strip().lower(), 
+                        'value': str(f_value).strip().upper(),
                     })
 
+            # Add fields from line item groups
+            if exp_data_full.line_items_groups:
+                for group in exp_data_full.line_items_groups:
+                    for row in group.rows:
+                        for cell in row.expenses:
+                            f_type = (cell.type.text
+                                      if cell.type else "LINE_ITEM")
+                            f_conf = cell.type.confidence if cell.type else 0.0
+                            f_label = cell.type.text if cell.type else ""
+                            f_value = cell.value.text if cell.value else ""
+                            
+                            if f_value:
+                                summ_dict.append({
+                                    'type': str(f_type).strip().upper(),
+                                    'conf': float(f_conf),
+                                    'label': str(f_label).strip().lower(),
+                                    'value': str(f_value).strip().upper(),
+                                })
         # Get raw text lines in case they were missed in summary
         if expense_doc.lines:
             raw_text_lines = [line.text.strip()
@@ -190,68 +215,335 @@ def process_images_textractor(image_paths):
     return raw_exp_data
 
 def clean_numeric(val_str):
-    """Helper to strip currencies, spaces, etc. from numeric data."""
+    """Strip currencies, text, and spaces to isolate clean numeric strings."""
     if not val_str:
         return None
-    # Strip symbols and chars
     cleaned = re.sub(r'[^\d\.\-]', '', val_str)
     return cleaned if cleaned else None
 
 
-def update_field_value(f_type, f_label, f_val, match_fields,
-                       currstd_fval, curr_ftype_rank=50, clean=False):
-    """Check whether the input field should be used to update std_field."""
+def update_field_value(f_type, f_label, fval, fconf, match_fields,
+                       currstd_fval, curr_stdfconf, curr_ftype_rank=100,
+                       clean=False):
+    """Check if the input field should update std_field based on field rank."""
     std_fval = currstd_fval
-    if f_type in match_fields:
-        ftype_pos = match_fields.index(f_type)
-    else:
-        ftype_pos = 100
-    if f_label in match_fields:
-        flabel_pos = match_fields.index(f_label)
-    else:
-        flabel_pos = 100
-    if flabel_pos < ftype_pos:
-        ftype_pos = flabel_pos
+    std_fconf = curr_stdfconf
+    
+    # Check rank
+    ftype_pos = match_fields.index(f_type) if f_type in match_fields else 100
+    flabel_pos = match_fields.index(f_label) if f_label in match_fields else 100
+    best_pos = min(ftype_pos, flabel_pos)
 
-    if ftype_pos < curr_ftype_rank and std_fval:
-            clean_fval = clean_numeric(f_val) if clean else f_val.upper()
-            if clean_fval:
-                std_fval = clean_fval
-                curr_ftype_rank = ftype_pos
+    # Update value if better rank
+    if best_pos < curr_ftype_rank and fval:
+        clean_fval = clean_numeric(fval) if clean else str(fval).upper().strip()
+        if clean_fval:
+            std_fval = clean_fval
+            std_fconf = fconf
+            curr_ftype_rank = best_pos
 
-    return std_fval, curr_ftype_rank
+    return std_fval, std_fconf, curr_ftype_rank
+
+
+def scrape_missing_metrics_from_text(std_record, raw_blob):
+    """
+    Robust fallback regex engine that handles layout text reversals,
+    multi-line spacing errors, varying unit symbols (L vs G), and 
+    prepaid receipt structures.
+    """
+    # 1. QUANTITY (LITERS) FALLBACK
+    if not std_record['quantity']:
+        qty_pattern = r'(?:LITRES|LITERS|\bL\b)[:\-]?\s+(\d+\.\d{2,3})|(\d+\.\d{2,3})\s*(?:LITRES|LITERS|\bL\b)'
+        qty_match = re.search(qty_pattern, raw_blob)
+        if qty_match:
+            std_record['quantity'] = qty_match.group(1) if qty_match.group(1) else qty_match.group(2)
+
+    # 2. UNIT COST (PRICE PER LITRE / GALLON) FALLBACK
+    if not std_record['cost_per_litre']:
+        price_pattern = r'PRICE/[LG](?:ITRE)?[:\-]?\s*\$?[:\-]?\s*\$?(\d+\.\d{2,3})|(\d+\.\d{2,3})\s*PRICE/[LG](?:ITRE)?'
+        price_match = re.search(price_pattern, raw_blob)
+        if price_match:
+            std_record['cost_per_litre'] = price_match.group(1) if price_match.group(1) else price_match.group(2)
+
+    # 3. FIX FOR COSTCO (DECOUPLING DUPLICATED ATTRIBUTES)
+    # If Textract misaligns bounding boxes and assigns the quantity to the unit price slot
+    if std_record['quantity'] and std_record['cost_per_litre']:
+        if float(std_record['quantity']) == float(std_record['cost_per_litre']):
+            # Scan the raw text stream for the true standalone pricing pattern (e.g., "$1.179")
+            # looking for a number following a standard pattern that isn't the volume number
+            true_price_match = re.search(r'(?:PRICE/LITRE|PRICE/L)[:\-]?\s*\$?(\d+\.\d{2,3})', raw_blob)
+            if true_price_match:
+                std_record['cost_per_litre'] = true_price_match.group(1)
+
+    # 4. PREPAID FOOTER SCANNER (For Burnaby and similar prepay receipts)
+    # If we have a cost (like $30.00) but are missing either volume metrics
+    if std_record['cost'] and (not std_record['quantity'] or not std_record['cost_per_litre']):
+        # If the receipt contains a prepaid indicator line
+        if 'PREPAY' in raw_blob or 'PRE-PAY' in raw_blob:
+            # Look for tax inclusions or text fragments that pinpoint real calculated metrics
+            # Shell receipts hide the GST tax calculation total down at the bottom
+            gst_inc_match = re.search(r'FUEL INCLUDES\s+GST\s+\d+\.\d+%\s*\$?(\d+\.\d{2})', raw_blob)
+            if gst_inc_match and not std_record['fed_tax']:
+                std_record['fed_tax'] = gst_inc_match.group(1)
+
+    return std_record
+
+
+def extract_granular_taxes(raw_blob):
+    fed_tax = 0.00
+    prov_tax = 0.00
+    
+    # Split text into uppercase string components
+    lines = [line.upper() for line in raw_blob.split('\n')]
+    
+    for line in lines:
+        # Step A: Process Federal (GST/HST)
+        if 'GST' in line or 'F-HST' in line:
+            # 1. Look for currency format directly associated with the keyword token
+            # Avoids corporate business numbers completely by requiring exactly two decimal places
+            match = re.search(r'(?:GST|F-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b', line)
+            if match:
+                fed_tax = float(match.group(1))
+            # 2. Fallback: Catch trailing inclusive amounts only if it matches standard decimal format
+            elif 'INCL' in line:
+                match_incl = re.search(r'\$\s*(\d{1,3}\.\d{2})', line)
+                if match_incl:
+                    fed_tax = float(match_incl.group(1))
+                    print(fed_tax)
+                    
+        # Step B: Process Provincial (PST/QST/BC TAX)
+        if any(token in line for token in ['PST', 'QST', 'BC TAX', 'PROV',
+                                           'P-HST']):
+            # Protect against picking up a percentage number like 7.0% by looking for standard dollar values
+            match = re.search(r'(?:PST|QST|BC TAX|PROV|P-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b', line)
+            if match:
+                prov_tax = float(match.group(1))
+            elif 'INCL' in line:
+                # Scans specific trailing provincial configurations
+                match_incl = re.search(r'P\-HST\s*INCL\s*\$\s*(\d{1,3}\.\d{2})', line)
+                if match_incl:
+                    prov_tax = float(match_incl.group(1))
+
+    return fed_tax, prov_tax
+
+
+def apply_global_fallbacks(std_record, raw_lines):
+    """Standardizes codes, fills structural gaps using raw text streams, and computes math fallbacks."""
+    raw_blob = " ".join(raw_lines).upper()
+
+    # Functionality A: Run regex layout text scrape if fields came up empty
+    std_record = scrape_missing_metrics_from_text(std_record, raw_blob)
+
+    # Get taxes
+    fed_tax, prov_tax = extract_granular_taxes(raw_blob)
+    if std_record['fed_tax'] is None:
+        std_record['fed_tax'] = fed_tax
+    if std_record['prov_tax'] is None:
+        std_record['prov_tax'] = prov_tax
+    try:
+        f_tax = float(std_record.get('fed_tax', 0.0) or 0.0)
+        p_tax = float(std_record.get('prov_tax', 0.0) or 0.0)
+        t_tax = float(std_record.get('total_tax', 0.0) or 0.0)
+    except ValueError:
+        f_tax, p_tax, t_tax = 0.0, 0.0, 0.0
+    if t_tax < (f_tax + p_tax) or not std_record['total_tax'] or std_record['total_tax'] == 'None':
+        std_record['total_tax'] = f"{round(f_tax + p_tax, 2)}"
+
+    # Functionality B: Map variable regional province text blocks to 2-letter IFTA codes
+    prov_dump = std_record['province']
+    if prov_dump == 'UNKNOWN' or len(prov_dump) > 2:
+        if any(p in raw_blob for p in [' AB ', 'ALBERTA', 'EDMONTON',
+                                       'RED DEER', 'CALGARY']):
+            std_record['province'] = 'AB'
+        elif any(p in raw_blob for p in [' BC ', 'BRITISH COLUMBIA', 'KELOUNA',
+                                         'VANCOUVER', 'BURNABY']):
+            std_record['province'] = 'BC'
+        elif any(p in raw_blob for p in [' SK ', 'SASKATCHEWAN', 'REGINA',
+                                         'SASKATOON']):
+            std_record['province'] = 'SK'
+        elif any(p in raw_blob for p in [' MB ', 'MANITOBA', 'WINNIPEG']):
+            std_record['province'] = 'MB'
+        elif any(p in raw_blob for p in [' ON ', 'ONTARIO', 'BARRIE',
+                                         'CALEDON', 'WILLOWDALE']):
+            std_record['province'] = 'ON'
+
+    # Fill city
+    if not std_record['city'] or std_record['city'] == 'UNKNOWN':
+        for city_check in ['RED DEER', 'EDMONTON', 'HANNA', 'CALEDON',
+                           'WINNIPEG', 'WILLOWDALE', 'BARRIE', 'LANGLEY',
+                           'BURNABY', 'CONSORT']:
+            if city_check in raw_blob:
+                std_record['city'] = city_check
+                break
+
+    # Functionality C: Standardize missing Fuel Type strings by sweeping raw layout lines
+    if std_record['fuel_type'] == 'UNKNOWN':
+        if 'DIESEL' in raw_blob:
+            std_record['fuel_type'] = 'DIESEL'
+            std_record['fuel_grade'] = 'UNKNOWN'
+        else:
+            for gas in ['SUPREME', 'BRONZE', 'PLUS', 'REGULAR', 'UNLEADED',
+                        'GASOLINE', 'EREG']:
+                if gas in raw_blob:
+                    std_record['fuel_type'] = 'GASOLINE'
+                    std_record['fuel_grade'] = gas
+                    if gas == 'EREG':
+                        std_record['fuel_grade'] = 'REGULAR'
+
+    # Functionality D: Mathematically deduce volume if structural fields and regex both missed it
+    if (not std_record['cost_per_litre'] or std_record['cost_per_litre'] == 'None') and std_record['cost'] and std_record['quantity']:
+        try:
+            tot_cost = float(std_record['cost'])
+            volume = float(std_record['quantity'])
+            
+            # Make sure we don't divide by zero or process anomalous quantities like 1
+            if volume > 0.0:  
+                calculated_unit_price = round(tot_cost / volume, 3)
+                std_record['cost_per_litre'] = f"{calculated_unit_price}"
+        except ValueError:
+            pass
+
+    # Robust Invoice/Transaction Number Fallback
+    if not std_record['invoice_number'] or std_record['invoice_number'] == 'None':
+        # Pattern covers: "INV No. 123", "TRANS #: 123", "TICKET # 123", or "REF #: 123"
+        inv_pattern = r'\b(?:INV(?:OICE)?\.?\s*(?:No\.?)?|TRANS(?:\s*#|\s*ACTION)?\.?\s*(?:No\.?)?|TICKET\s*#?|REF(?:ERENCE)?\s*#?)\s*[:\-]?\s*([A-Z0-9\-]{4,15})\b'
+        inv_match = re.search(inv_pattern, raw_blob, re.IGNORECASE)
+        if inv_match:
+            std_record['invoice_number'] = inv_match.group(1).strip()
+
+    if not std_record['invoice_number'] or std_record['invoice_number'] == 'None':
+        # Find the PC sequence (e.g., PC0970310:3537601)
+        pc_match = re.search(r'PC\d+:\s*(\d+)', raw_blob)
+        if pc_match:
+            std_record['invoice_number'] = pc_match.group(1)
+
+    # Payment Form Fallback Loop
+    if not std_record['payment_form'] or std_record['payment_form'] == 'None':
+        raw_upper = raw_blob.upper()
+        if 'INTERAC' in raw_upper or 'DEBIT' in raw_upper or 'CHEQUING' in raw_upper:
+            std_record['payment_form'] = 'DEBIT'
+        elif 'VISA' in raw_upper or 'UISA' in raw_upper:
+            std_record['payment_form'] = 'VISA'
+        elif 'MASTERCARD' in raw_upper or 'MCARD' in raw_upper or 'MASTER' in raw_upper:
+            std_record['payment_form'] = 'MASTERCARD'
+        elif 'AMEX' in raw_upper or 'AMERICAN EXPRESS' in raw_upper:
+            std_record['payment_form'] = 'AMEX'
+        elif 'CASH' in raw_upper:
+            std_record['payment_form'] = 'CASH'
+        elif 'CARD #' in raw_upper or 'FLEET' in raw_upper:
+            std_record['payment_form'] = 'FLEET_CARD'
+
+    # Robust Time Fallback Loop
+    if not std_record['time'] or std_record['time'] == 'None' or std_record['time'] is None:
+        # Matches: "13:13:37", "19:05", or "16: 27" (handles optional spaces and optional seconds)
+        time_pattern = r'\b([0-9]?\d)\s*:\s*([0-9]\d)(?:\s*:\s*([0-5]\d))?\b'
+        time_match = re.search(time_pattern, raw_blob)
+        
+        if time_match:
+            hours = time_match.group(1).zfill(2)
+            minutes = time_match.group(2)
+            seconds = time_match.group(3)
+            
+            if seconds:
+                std_record['time'] = f"{hours}:{minutes}:{seconds}"
+            else:
+                std_record['time'] = f"{hours}:{minutes}:00"
+
+    return std_record
 
 
 def extract_clean_record(raw_exp_data):
-    """Select only relevant fields."""
+    """Selects and standardizes core variables using a configuration matrix and multi-layered fallbacks.    """
     clean_records = []
-    # Mapping record keys with expected field types.
+    clean_confscores = []
+    
+    # Centralized configuration mapping matrix
     field_map = {
-        'province': ['STATE'], 'date': ['INVOICE_RECEIPT_DATE'],
-        'quantity': ['litres', 'l'],
-        'cost':['TOTAL', 'AMOUNT_PAID', 'fuel sales', 'AMOUNT_DUE'],
-        'fuel_type': ['product', 'grade', 'fuel'],
-        'cost_per_litre': ['UNIT_PRICE']}
+        'invoice_number': ['INVOICE_RECEIPT_ID', 'receipt no', 'invoice no',
+                           'inv no.'],
+        'date': ['INVOICE_RECEIPT_DATE', 'date:'],
+        'time': ['TRANSACTION_TIME', 'time:'],
+        'vendor_name': ['VENDOR_NAME'],
+        'city': ['CITY'],
+        'province': ['STATE'],
+        'fuel_type': ['FUEL'],
+        'fuel_grade': ['product', 'grade', 'fuel'],
+        'quantity': ['QUANTITY', 'litres', 'l', 'litres :', 'quantity',
+                     'volume'],
+        'cost_per_litre': ['UNIT_PRICE', 'price/litre', 'price/l', 'unit_price',
+                           'price/g'],
+        'cost': ['TOTAL', 'AMOUNT_PAID', 'PRICE', 'fuel sales', 'AMOUNT_DUE',
+                 'total fuel'],
+        'total_tax': ['TAX'],
+        # 'fed_tax':['gst included:', 'fhst included in fuel', 'gst included',
+        #           '* f-hst incl$', 'gst', 'f-hst'],
+        # 'prov_tax':['* p-hst incl$', 'pst', 'p-hst'],
+        'fed_tax': ['fhst included in fuel', 'fuel includes gst 5.0%'],
+        'prov_tax':['phst included in fuel', 'fuel includes pst 7.0%'],
+        'payment_form': ['PAYMENT_TYPE'],
+    }
+    
+    clean_numeric_bool = [
+        False, False, False, False, False, False, 
+        False, False, True, True, True, True, True, True, False]
+
     for record in raw_exp_data:
-        # Skeletal clean record
+        # Uniform target layout template matching the required elements exactly
         std_record = {
-            'province': 'UNKNOWN', 'date': None, 'qunatity': None,
-            'cost': None, 'fuel_type': 'UNKNOWN',
-            'cost_per_litre': None
+            'invoice_number': None, 'date': None, 'time': None,
+            'vendor_name': None, 'city': None, 'province': 'UNKNOWN',
+            'fuel_type': 'UNKNOWN', 'fuel_grade': 'UNKNOWN', 'quantity': None,
+            'cost_per_litre': None, 'cost': None, 'total_tax': None,
+            'fed_tax': None, 'prov_tax': None,
+            'payment_form': None
         }
-        clean_numeric_bool = [False, False, True, True, False, True]
-        curr_std_ranks = [50, 50, 50, 50, 50, 50]
-        summ_list = record['fields']
-        for field in summ_list:
-            for i, std_key in enumerate(std_record):
-                std_fval, curr_std_ranks = update_field_value(
-                    field['type'], field['label'], field['value'],
-                    field_map[std_key], std_record[std_key], curr_std_ranks[i],
-                    clean_numeric_bool[i]
-                )
+
+        confidence_scores = {
+            'invoice_number': 0.0, 'date': 0.0, 'time': 0.0,
+            'vendor_name': 0.0, 'city': 0.0, 'province': 0.0,
+            'fuel_type': 0.0, 'fuel_grade': 0.0, 'quantity': 0.0,
+            'cost_per_litre': 0.0, 'cost': 0.0, 'total_tax': 0.0,
+            'fed_tax': 0.0, 'prov_tax': 0.0, 'payment_form': 0.0
+        }
         
+        curr_std_ranks = [100] * len(field_map)
+        
+        summ_list = record.get('fields', [])
+        raw_lines = record.get('raw_lines', [])
+        
+        # Run through structural summary layout fields
+        for field in summ_list:
+            f_label = field['label'].strip().lower() if field['label'] else ""
+            f_type = field['type']
+            f_value = field['value']
+            f_conf = field['conf']
 
+            for i, std_key in enumerate(field_map.keys()):
+                # Update value if needed
+                updated_val, updated_conf, updated_rank = update_field_value(
+                    f_type=f_type, 
+                    f_label=f_label, 
+                    fval=f_value, 
+                    fconf=f_conf,
+                    match_fields=field_map[std_key],
+                    currstd_fval=std_record[std_key],
+                    curr_stdfconf= confidence_scores[std_key],
+                    curr_ftype_rank=curr_std_ranks[i],
+                    clean=clean_numeric_bool[i]
+                )
+                
+                std_record[std_key] = updated_val
+                confidence_scores[std_key] = updated_conf
+                curr_std_ranks[i] = updated_rank
 
+        # Check for missing values in the raw lines
+        std_record = apply_global_fallbacks(std_record, raw_lines)
+        clean_records.append(std_record)
+        clean_confscores.append(confidence_scores)
+
+    return (pd.DataFrame(clean_records) if clean_records else pd.DataFrame(),
+            (pd.DataFrame(clean_confscores)
+            if clean_confscores else pd.DataFrame()))
 
 
 def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
@@ -266,7 +558,8 @@ def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
             return pd.DataFrame()
 
         #Run Textractor
-        return process_images_textractor(image_paths)
+        raw_data = process_images_textractor(image_paths)
+        return extract_clean_record(raw_data)
 
     finally:
         # So that the temp file is deleted even when there is err
