@@ -10,6 +10,7 @@ import io
 import boto3
 from botocore.exceptions import ClientError
 import docx2txt
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from pypdf import PdfReader
@@ -546,6 +547,57 @@ def extract_clean_record(raw_exp_data):
             if clean_confscores else pd.DataFrame()))
 
 
+def clean_and_standardize_dataframe(df):
+    clean_df = df.copy()
+    
+    # 1. FORCE UNIFORM STRING CLEANING FOR DATE AND TIME
+    clean_df['date'] = clean_df['date'].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
+    clean_df['time'] = clean_df['time'].astype(str).str.replace(r'(\d+):\s+(\d+)', r'\1:\2', regex=True).str.strip()
+    clean_df['time'] = clean_df['time'].str.replace(r'^(\d{2}:\d{2})$', r'\1:00', regex=True)
+    
+    # Fix specific typos
+    clean_df['date'] = clean_df['date'].str.replace('2016- 33 16', '2016/03/16', regex=False)
+    clean_df['date'] = clean_df['date'].str.replace('2025/11/38', '2025/11/30', regex=False)
+    clean_df['date'] = clean_df['date'].str.replace('-', '/', regex=False)
+    clean_df['time'] = clean_df['time'].str.replace('99:56:00', '09:56:00', regex=False)
+
+    # 2. PARSE UNIFIED DATETIME TIMESTAMP
+    clean_df['timestamp'] = pd.to_datetime(
+        clean_df['date'] + ' ' + clean_df['time'], 
+        format='%Y/%m/%d %H:%M:%S',
+        errors='coerce'
+    )
+    clean_df['date'] = clean_df['timestamp'].dt.strftime('%Y-%m-%d')
+    clean_df['time'] = clean_df['timestamp'].dt.strftime('%H:%M:%S')
+
+    # 3. CLEAN TEXT FIELDS WITH CUSTOM HYPHEN/SPACE RULES
+    text_columns = ['vendor_name', 'city', 'province', 'invoice_number', 'fuel_grade', 'payment_form']
+    for col in text_columns:
+        if col in clean_df.columns:
+            clean_df[col] = (clean_df[col].astype(str)
+                             .str.replace(r'[\r\n]+', ' ', regex=True) # Wipes out raw newlines
+                             .str.strip()                             # Drops leading/trailing spaces
+                             .str.strip('-')                          # Drops leading/trailing hyphens
+                             .str.replace(r'-', ' ', regex=False)     # Converts middle hyphens to spaces
+                             .str.replace(r'\s+', ' ', regex=True)     # Shrinks any resulting double spaces
+                             .str.strip()                             # Final safety strip
+                             .replace({'None': np.nan, 'NONE': np.nan, 'nan': np.nan, '': np.nan}))
+            
+    # 4. FORCE NUMERIC FIELDS TO FLOATS
+    numeric_columns = ['quantity', 'cost_per_litre', 'cost', 'total_tax', 'fed_tax', 'prov_tax']
+    for col in numeric_columns:
+        if col in clean_df.columns:
+            clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce')
+            
+    # 5. ENFORCE SYSTEM CONSISTENCY RULES
+    clean_df.loc[clean_df['quantity'] == 1.0, 'quantity'] = np.nan
+    
+    # Sort chronologically by your new timestamp
+    clean_df = clean_df.sort_values(by='timestamp').reset_index(drop=True)
+    
+    return clean_df
+
+
 def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
     """"""
     temp_imgdir = Path(temp_imgdir)
@@ -559,7 +611,9 @@ def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
 
         #Run Textractor
         raw_data = process_images_textractor(image_paths)
-        return extract_clean_record(raw_data)
+        invoice_dataframe, inv_conf_scores = extract_clean_record(raw_data)
+        return (clean_and_standardize_dataframe(invoice_dataframe),
+                inv_conf_scores)
 
     finally:
         # So that the temp file is deleted even when there is err
@@ -600,3 +654,122 @@ def get_dataframe_onefile(datafile):
         pass
         # code to load docx table as dataframe
     return clean_dataframe(data_table)
+
+
+def clean_distance_log(log_path):
+    # Load the uploaded distance log file
+    df_log = pd.read_csv(log_path)
+    
+    # Standardize empty strings or spaces in names
+    df_log['Origin'] = df_log['Origin'].str.strip()
+    df_log['Destination'] = df_log['Destination'].str.strip()
+    
+    # Fix the mixed/irregular date formatting strings dynamically
+    # This natively reads configurations like 'Jan 7 2023', '2016-03-16', and '03-06-2016'
+    df_log['trip_date'] = pd.to_datetime(df_log['Date'].str.strip(), errors='coerce')
+    
+    # Drop rows that don't have valid dates since we can't align them chronologically
+    df_log = df_log.dropna(subset=['trip_date'])
+    
+    # Set up a timestamp anchor for the merge (defaulting to the start of the log day)
+    df_log['timestamp'] = df_log['trip_date']
+    
+    return df_log.sort_values('timestamp')
+
+def merge_invoices_with_distance_logs(df_clean_invoices, clean_log_path):
+    # 1. Clean and fetch the distance logging profiles
+    df_log = clean_distance_log(clean_log_path)
+    
+    # 2. Ensure your invoice dataframe is explicitly sorted by its unified timestamp
+    df_inv = df_clean_invoices.sort_values('timestamp')
+    
+    # 3. Execute an asof merge mapping by date proximity matching backwards
+    # This links the transaction to the closest recorded trip on or right before that date
+    merged_df = pd.merge_asof(
+        df_inv,
+        df_log,
+        on='timestamp',
+        by='province',  # CRITICAL: Ensures the invoice province matches the log jurisdiction destination profile
+        direction='nearest'
+    )
+    
+    # 4. Generate and Map the Explicitly Requested Evaluation Columns
+    merged_df['trip_origin'] = merged_df['Origin']
+    merged_df['trip_destination'] = merged_df['Destination']
+    merged_df['start_odometer'] = merged_df['Start_Odometer']
+    merged_df['end_odometer'] = merged_df['End_Odometer']
+    merged_df['distance_km'] = merged_df['Distance_km']
+    
+    # Set default tracking flags for fields missing from the physical log copies
+    merged_df['trip_start_time'] = 'UNKNOWN'
+    merged_df['trip_end_time'] = 'UNKNOWN'
+    merged_df['VIN_or_truck_number'] = 'FLEET_UNIT_01'
+    
+    # Determine distance traveled by jurisdiction dynamically based on log maps
+    # If the trip ended in the matching invoice province, assign the full distance to it
+    merged_df['distance_traveled_by_jurisdiction'] = merged_df.apply(
+        lambda r: f"{r['province']}: {r['distance_km']} km" if pd.notna(r['distance_km']) else "UNKNOWN", 
+        axis=1
+    )
+    
+    # 5. Drop intermediate duplicate columns to keep the output pristine
+    columns_to_drop = ['Origin', 'Destination', 'Start_Odometer', 'End_Odometer', 'Distance_km', 'Date']
+    merged_df = merged_df.drop(columns=[c for c in columns_to_drop if c in merged_df.columns])
+    
+    return merged_df
+
+
+def compile_master_distance_log(df_log1_raw, df_log2_raw):
+    # --- PROCESS DISTANCE LOG 1 (Spreadsheet) ---
+    log1 = df_log1_raw.copy()
+    log1_clean = pd.DataFrame()
+    
+    # Safely handle potential variations in column naming
+    log1_clean['date'] = pd.to_datetime(log1['Date'])
+    log1_clean['trip_origin'] = log1['Origin'].astype(str).str.strip()
+    log1_clean['trip_destination'] = log1['Destination'].astype(str).str.strip()
+    log1_clean['start_odometer'] = pd.to_numeric(log1['Start_Odometer'], errors='coerce')
+    log1_clean['end_odometer'] = pd.to_numeric(log1['End_Odometer'], errors='coerce')
+    log1_clean['distance_km'] = pd.to_numeric(log1['Distance_km'], errors='coerce')
+    
+    # Initialize empty jurisdiction columns for Log 1
+    juris_cols = ['AB KMs', 'BC KMs', 'SK KMs', 'MB KMs', 'ON KMs', 'QC KMs', 'YT KMs',
+                  'AB Fuel', 'BC Fuel', 'SK Fuel', 'MB Fuel', 'ON Fuel', 'QC Fuel']
+    for col in juris_cols:
+        log1_clean[col] = np.nan
+
+    # --- PROCESS DISTANCE LOG 2 (Textractor DataFrame) ---
+    log2 = df_log2_raw.copy()
+    log2_clean = pd.DataFrame()
+    
+    # Fix the YY date formats (e.g., '02/5/22' -> 2022-05-02)
+    log2_clean['date'] = pd.to_datetime(log2['DATE'].astype(str).str.strip(), format='%d/%m/%y', errors='coerce')
+    log2_clean['trip_origin'] = log2['STARTING POINT'].astype(str).str.strip()
+    log2_clean['trip_destination'] = log2['DESTINATION'].astype(str).str.strip()
+    log2_clean['start_odometer'] = pd.to_numeric(log2['START KM'], errors='coerce')
+    log2_clean['end_odometer'] = pd.to_numeric(log2['END KM'], errors='coerce')
+    log2_clean['distance_km'] = pd.to_numeric(log2['TOTAL KM'], errors='coerce')
+    
+    # Direct pass-through for the detailed IFTA metrics
+    for col in juris_cols:
+        if col in log2.columns:
+            log2_clean[col] = pd.to_numeric(log2[col], errors='coerce')
+            
+    # --- COMBINE AND CLEAN ---
+    # Merge both tables vertically
+    df_master_log = pd.concat([log1_clean, log2_clean], ignore_index=True)
+    
+    # Drop rows that don't have valid dates or odometer entries
+    df_master_log = df_master_log.dropna(subset=['date', 'start_odometer'])
+    
+    # Apply your custom string rules: drop hyphens at edges, switch interior hyphens to spaces
+    for col in ['trip_origin', 'trip_destination']:
+        df_master_log[col] = (df_master_log[col]
+                              .str.strip('- ')
+                              .str.replace('-', ' ', regex=False)
+                              .str.replace(r'\s+', ' ', regex=True))
+        
+    # Sort chronologically so pd.merge_asof can look back through time correctly
+    df_master_log = df_master_log.sort_values(by='date').reset_index(drop=True)
+    
+    return df_master_log
