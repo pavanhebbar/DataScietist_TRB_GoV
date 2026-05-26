@@ -629,7 +629,9 @@ def clean_dataframe(df_uncleaned):
     """Remove all empty rows"""
     df_uncleaned = df_uncleaned.replace(r'^\s*$', pd.NA, regex=True)
     df_cleaned = df_uncleaned.dropna(how='all')
-    return df_cleaned.reset_index(drop=True)
+    is_duplicate = df_cleaned.astype(str).duplicated()
+    df_cleaned = df_cleaned[~is_duplicate].reset_index(drop=True)
+    return df_cleaned
 
 
 def get_dataframe_onefile(datafile):
@@ -651,8 +653,12 @@ def get_dataframe_onefile(datafile):
         data_table = get_df_from_textract_tables(
             tables, column_names_everytable=True)
     elif filetype == '.docx' or filetype == '.doc':
-        pass
+        data_table = run_textractor_docx_invoices(
+            datafile)
         # code to load docx table as dataframe
+    else:
+        print('Can only read excel, csv, pdf and .docx')
+        data_table = pd.DataFrame
     return clean_dataframe(data_table)
 
 
