@@ -653,12 +653,13 @@ def get_dataframe_onefile(datafile):
         data_table = get_df_from_textract_tables(
             tables, column_names_everytable=True)
     elif filetype == '.docx' or filetype == '.doc':
-        data_table = run_textractor_docx_invoices(
+        data_table, conf_scores = run_textractor_docx_invoices(
             datafile)
+        conf_scores.to_excel('Data/Invoice_conf_scores.xlsx')
         # code to load docx table as dataframe
     else:
         print('Can only read excel, csv, pdf and .docx')
-        data_table = pd.DataFrame
+        data_table = pd.DataFrame()
     return clean_dataframe(data_table)
 
 
