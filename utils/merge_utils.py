@@ -59,7 +59,8 @@ def compile_master_distance_log(df_log1_raw, df_log2_raw):
     return df_master_log
 
 
-def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
+def build_unified_ml_dataset(df_log1, df_log2, df_invoices, days_window=3):
+    """"Build final dataset me merging distance logs and invoices."""
     l1 = df_log1.copy()
     l2 = df_log2.copy()
     inv = df_invoices.copy()
@@ -89,11 +90,13 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
     bc_km = np.zeros(n_rows)
     mb_km = np.zeros(n_rows)
     on_km = np.zeros(n_rows)
+    sk_km = np.zeros(n_rows)
     
     ab_fuel = np.full(n_rows, np.nan)
     bc_fuel = np.full(n_rows, np.nan)
     mb_fuel = np.full(n_rows, np.nan)
     on_fuel = np.full(n_rows, np.nan)
+    sk_fuel = np.full(n_rows, np.nan)
     
     l1_dist_col = 'distance_km' if 'distance_km' in l1.columns else ('distance km' if 'distance km' in l1.columns else l1.columns[0])
     l1_total_km = pd.to_numeric(l1[l1_dist_col], errors='coerce').fillna(0.0).values
@@ -102,8 +105,8 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
         if pd.isna(row['date']):
             continue
         matching_inv = inv[
-            (inv['date'] >= row['date']) & 
-            (inv['date'] <= row['date'] + pd.Timedelta(days=7))
+            (inv['date'] >= row['date'] - pd.Timedelta(days=days_window)) &
+            (inv['date'] <= row['date'] + pd.Timedelta(days=days_window))
         ]
         if not matching_inv.empty:
             target_inv = matching_inv.sort_values('date').iloc[0]
@@ -126,13 +129,20 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
             # Map Jurisdictional Distance and Fuel using the found invoice province
             dist = l1_total_km[idx]
             if prov == 'AB':
-                ab_km[idx] = dist; ab_fuel[idx] = qty
+                ab_km[idx] = dist
+                ab_fuel[idx] = qty
             elif prov == 'BC':
-                bc_km[idx] = dist; bc_fuel[idx] = qty
+                bc_km[idx] = dist
+                bc_fuel[idx] = qty
             elif prov == 'MB':
-                mb_km[idx] = dist; mb_fuel[idx] = qty
+                mb_km[idx] = dist
+                mb_fuel[idx] = qty
             elif prov == 'ON':
-                on_km[idx] = dist; on_fuel[idx] = qty
+                on_km[idx] = dist
+                on_fuel[idx] = qty
+            elif prov == 'SK':
+                sk_km[idx] = dist
+                sk_fuel[idx] = qty
 
     def find_column_value(df, variations_list):
         for variant in variations_list:
@@ -152,11 +162,13 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
         'bc_km': bc_km,
         'mb_km': mb_km,
         'on_km': on_km,
+        'sk_km': sk_km,
         
         'ab_fuel': ab_fuel,
         'bc_fuel': bc_fuel,
         'mb_fuel': mb_fuel,
         'on_fuel': on_fuel,
+        'sk_fuel': sk_fuel,
         
         'matching_invoice_number': matching_invoice_number,
         'invoice_date': invoice_date,
@@ -183,12 +195,14 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
         'ab_km': pd.to_numeric(find_column_value(l2, ['ab kms', 'ab_kms', 'ab']), errors='coerce').fillna(0.0),
         'bc_km': pd.to_numeric(find_column_value(l2, ['bc kms', 'bc_kms', 'bc']), errors='coerce').fillna(0.0),
         'mb_km': pd.to_numeric(find_column_value(l2, ['mb kms', 'mb_kms', 'mb']), errors='coerce').fillna(0.0),
-        'on_km': 0.0,
+        'on_km': pd.to_numeric(find_column_value(l2, ['on kms', 'on_kms', 'mb']), errors='coerce').fillna(0.0),
+        'sk_km': pd.to_numeric(find_column_value(l2, ['sk kms', 'sk_kms', 'sk']), errors='coerce').fillna(0.0),
         
         'ab_fuel': np.where(raw_ab_fuel > 0, raw_ab_fuel, np.nan),
         'bc_fuel': np.where(raw_bc_fuel > 0, raw_bc_fuel, np.nan),
         'mb_fuel': np.nan,
         'on_fuel': np.nan,
+        'sk_fuel': np.nan,
         
         'matching_invoice_number': 'NO MATCHING INVOICE',
         'invoice_date': pd.NaT,

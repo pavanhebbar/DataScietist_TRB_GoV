@@ -143,6 +143,7 @@ def calculate_global_importance(df_statistical, features):
     
     return driver_df
 
+
 def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
     """
     STAGE 2: Isolation Forest Anomaly Detection with integrated Local Feature Ablation.
@@ -210,6 +211,63 @@ def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
     df_importance = calculate_global_importance(df_statistical, features)
     
     return df_validated_clean, df_statistical, df_importance
+
+
+def contamination_sensitivity_check(df_pool, rates=None):
+    """
+    Runs Isolation Forest at multiple contamination rates to justify
+    the chosen threshold. Prints flagged record counts and plots the curve.
+    
+    IFTA context: helps determine what % of trips warrant audit review
+    without overwhelming investigators with false positives.
+    """
+    if rates is None:
+        rates = [0.01, 0.02, 0.03, 0.05, 0.08, 0.10]
+
+    base_features = [
+        'total_km', 'total_fuel_litres', 'fuel_litres_per_km',
+        'weekly_avg_distance_km', 'weekly_avg_fuel_litres',
+        'dist_to_weekly_ratio', 'fuel_to_weekly_ratio',
+        'dist_to_monthly_ratio', 'fuel_to_monthly_ratio'
+    ]
+
+    df_modeling = df_pool.dropna(subset=base_features).copy()
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(df_modeling[base_features])
+
+    results = []
+    print("\n📊 Contamination Rate Sensitivity Check:")
+    print(f"   {'Rate':>8} | {'Flagged':>8} | {'% of Pool':>10}")
+    print("   " + "-" * 32)
+
+    for rate in rates:
+        iso = IsolationForest(
+            n_estimators=200, contamination=rate,
+            random_state=42, n_jobs=-1
+        )
+        preds = iso.fit_predict(X_scaled)
+        n_flagged = (preds == -1).sum()
+        pct = n_flagged / len(df_modeling) * 100
+        results.append({'rate': rate, 'flagged': n_flagged, 'pct': pct})
+        print(f"   {rate:>8.0%} | {n_flagged:>8} | {pct:>9.1f}%")
+
+    # Plot the curve
+    results_df = pd.DataFrame(results)
+    plt.figure(figsize=(8, 4))
+    plt.plot(results_df['rate'] * 100, results_df['flagged'],
+             marker='o', color='steelblue', linewidth=2)
+    plt.axvline(x=3, color='red', linestyle='--',
+                label='Selected threshold (3%)')
+    plt.title('Isolation Forest: Flagged Records vs Contamination Rate',
+              fontweight='bold')
+    plt.xlabel('Contamination Rate (%)')
+    plt.ylabel('Flagged Records')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return results_df
+
 
 def execute_full_audit_pipeline(df_raw, contamination=0.03):
     """Complete Pipeline Orchestration Block."""

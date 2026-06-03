@@ -7,7 +7,7 @@ import numpy as np
 
 def calculate_efficiency_and_costs(df):
     """Computes overall consumption rates and financial metrics per kilometer."""
-    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel']
+    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel', 'sk_fuel']
     
     # Sum across provincial fuel columns per row, keeping completely NaN rows as NaN
     total_fuel = df[fuel_cols].sum(axis=1, min_count=1)
@@ -38,7 +38,7 @@ def calculate_jurisdictional_proportions(df, total_fuel_series):
     """Computes variances between where miles were driven vs where fuel was bought."""
     proportions_dict = {}
     
-    for prov in ['ab', 'bc', 'mb', 'on']:
+    for prov in ['ab', 'bc', 'mb', 'on', 'sk']:
         km_col = f'{prov}_km'
         fuel_col = f'{prov}_fuel'
         
@@ -62,6 +62,88 @@ def calculate_jurisdictional_proportions(df, total_fuel_series):
         )
         
     return pd.DataFrame(proportions_dict, index=df.index)
+
+
+def build_nearby_fuel_lookup(df, window_days=3):
+    """
+    For each trip date, scans all rows in the dataset for a provincial 
+    fuel record within ±window_days. Returns the nearest fuel sum found, 
+    or NaN if nothing exists in the window.
+
+    IFTA context: fuel purchases don't always happen on the exact trip date.
+    A ±2 day window accounts for fuelling just before departure or just 
+    after arrival, which is operationally realistic.
+    """
+    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel', 'sk_fuel']
+
+    # Build a date-indexed Series of provincial fuel sums
+    # Mask zeros — a zero fuel entry is a missing entry, not a real purchase
+    prov_fuel_sum = df[fuel_cols].sum(axis=1, min_count=1)
+    prov_fuel_sum = prov_fuel_sum.where(prov_fuel_sum > 0)
+
+    fuel_by_date = pd.Series(
+        prov_fuel_sum.values,
+        index=df['trip_date']
+    ).dropna().sort_index()
+
+    nearby_fuel = pd.Series(np.nan, index=df.index)
+
+    for idx, trip_date in zip(df.index, df['trip_date']):
+        if pd.isna(trip_date):
+            continue
+
+        window = fuel_by_date[
+            (fuel_by_date.index >= trip_date - pd.Timedelta(days=window_days)) &
+            (fuel_by_date.index <= trip_date + pd.Timedelta(days=window_days))
+        ]
+
+        if not window.empty:
+            # Pick the closest entry by date, not the largest fuel value
+            nearest_idx = (window.index - trip_date).abs().argmin()
+            nearby_fuel[idx] = window.iloc[nearest_idx]
+
+    return nearby_fuel
+
+
+def reconcile_fuel_sources(df, window_days=3):
+    """
+    Builds a single authoritative total_fuel_litres using a ±window_days
+    temporal window for both sources.
+
+    Priority (highest to lowest confidence):
+    1. invoice_quantity  — verified purchase from Textract analyze_expense
+    2. provincial_log — self-reported fuel sum from distance log within ±2 days
+    3. missing        — no fuel record of any kind within ±2 days of the trip
+
+    IFTA audit relevance: 'missing' is the true red flag — it means a trip
+    occurred with no verifiable fuel record nearby, which warrants review.
+    'provincial_log' is lower confidence than 'invoice' but is not a gap.
+    """
+    invoice_qty = pd.to_numeric(
+        df.get('invoice_quantity', pd.Series(np.nan, index=df.index)),
+        errors='coerce'
+    )
+    # Treat zero invoice quantities as missing — likely a parsing artifact
+    invoice_qty = invoice_qty.where(invoice_qty > 0)
+
+    # ±2 day provincial fuel lookup across the full dataset
+    nearby_prov_fuel = build_nearby_fuel_lookup(df, window_days=window_days)
+
+    # Invoice takes priority; provincial log fills the gap; NaN if neither
+    total_fuel = invoice_qty.combine_first(nearby_prov_fuel)
+
+    # Audit trail: track exactly where the fuel figure came from
+    conditions = [
+        invoice_qty.notna(),
+        nearby_prov_fuel.notna(),
+    ]
+    choices = ['invoice', 'provincial_log']
+    fuel_source = pd.Series(
+        np.select(conditions, choices, default='missing'),
+        index=df.index
+    )
+
+    return total_fuel, fuel_source
 
 
 def extract_temporal_trends(df):
