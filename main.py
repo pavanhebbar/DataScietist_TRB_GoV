@@ -58,9 +58,8 @@ def stage1_extract():
 
     # Invoices: images inside .docx → Textract analyze_expense
     print("\n📄 Extracting invoices from .docx (Textract analyze_expense)...")
-    df_invoices, conf_scores = get_dataframe_onefile(str(INVOICE_FILE))
-    print(f"   {len(df_invoices)} invoice records | "
-          f"Mean confidence: {conf_scores['conf'].mean():.1%}")
+    df_invoices = get_dataframe_onefile(str(INVOICE_FILE))
+    print(f"   {len(df_invoices)} invoice records   ")
 
     # Distance Log 1: Excel spreadsheet (2016–2021)
     print("\n📊 Loading Distance Log 1 (Excel)...")
@@ -72,7 +71,7 @@ def stage1_extract():
     df_log2 = get_dataframe_onefile(str(DISTANCE_LOG2))
     print(f"   {len(df_log2)} rows")
 
-    return df_invoices, conf_scores, df_log1, df_log2
+    return df_invoices, df_log1, df_log2
 
 
 def stage2_merge(df_invoices, df_log1, df_log2):
@@ -165,7 +164,7 @@ def _save(df, filename):
 
 def main():
     """Run the pipeline."""
-    df_invoices, conf_scores, df_log1, df_log2 = stage1_extract()
+    df_invoices, df_log1, df_log2 = stage1_extract()
     df_ml       = stage2_merge(df_invoices, df_log1, df_log2)
     df_feat     = stage3_features(df_ml)
     df_clean, df_audit, df_importance = stage4_analysis(df_feat)

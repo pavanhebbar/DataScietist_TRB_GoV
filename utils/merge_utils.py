@@ -183,14 +183,22 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices, days_window=3):
     # ----------------------------------------------------
     raw_ab_fuel = pd.to_numeric(find_column_value(l2, ['ab fuel', 'ab_fuel']), errors='coerce').fillna(0.0)
     raw_bc_fuel = pd.to_numeric(find_column_value(l2, ['bc fuel', 'bc_fuel']), errors='coerce').fillna(0.0)
+    l2_start_odo = pd.to_numeric(
+        find_column_value(l2, ['start km', 'start_km', 'start odometer']),
+        errors='coerce').fillna(0.0)
+    l2_end_odo = pd.to_numeric(
+        find_column_value(l2, ['end km', 'end_km', 'end odometer']),
+        errors='coerce').fillna(0.0)
+    l2_total_km = (l2_end_odo - l2_start_odo).clip(lower=0)
     
     log2_mapped = pd.DataFrame({
         'trip_date': l2['date'],
         'trip_origin': find_column_value(l2, ['starting point', 'starting_point', 'origin', 'trip origin']),
-        'trip_destination': find_column_value(l2, ['destination', 'trip destination']),
-        'start_odometer': pd.to_numeric(find_column_value(l2, ['start km', 'start_km', 'start odometer']), errors='coerce').fillna(0.0),
-        'end_odometer': pd.to_numeric(find_column_value(l2, ['end km', 'end_km', 'end odometer']), errors='coerce').fillna(0.0),
-        'total_km': pd.to_numeric(find_column_value(l2, ['total km', 'total_km']), errors='coerce').fillna(0.0),
+        'trip_destination': find_column_value(l2, ['destination',
+                                                   'trip destination']),
+        'start_odometer':   l2_start_odo,
+        'end_odometer':     l2_end_odo,
+        'total_km':         l2_total_km,  
         
         'ab_km': pd.to_numeric(find_column_value(l2, ['ab kms', 'ab_kms', 'ab']), errors='coerce').fillna(0.0),
         'bc_km': pd.to_numeric(find_column_value(l2, ['bc kms', 'bc_kms', 'bc']), errors='coerce').fillna(0.0),

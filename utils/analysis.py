@@ -151,13 +151,22 @@ def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
     print("\n🌲 Stage 2: Fitting Isolation Forest on sanitized operational data...")
     
     base_features = [
-        'total_km', 'total_fuel_litres', 'fuel_litres_per_km',
+        'total_km',
+        'total_fuel_litres',
+        'fuel_litres_per_km',
+        'window_fuel_per_km',
+        'nearby_prov_fuel',
+        'nearby_window_km',
+        'provincial_sum_km',
+        'km_reconciliation_gap',
+        'fuel_source_reliability',
+        'odometer_gap',
         'weekly_avg_distance_km', 'weekly_avg_fuel_litres',
-        'dist_to_weekly_ratio', 'fuel_to_weekly_ratio',
-        'dist_to_monthly_ratio', 'fuel_to_monthly_ratio'
-    ]
+       'dist_to_weekly_ratio',   'fuel_to_weekly_ratio',
+        'dist_to_monthly_ratio',  'fuel_to_monthly_ratio']
+
     
-    provinces = ['ab', 'bc', 'mb', 'on']
+    provinces = ['ab', 'bc', 'mb', 'on', 'sk']
     jurisdiction_features = []
     for prov in provinces:
         jurisdiction_features.extend([f'{prov}_dist_prop', f'{prov}_fuel_prop', f'{prov}_dist_fuel_variance'])
@@ -225,11 +234,16 @@ def contamination_sensitivity_check(df_pool, rates=None):
         rates = [0.01, 0.02, 0.03, 0.05, 0.08, 0.10]
 
     base_features = [
-        'total_km', 'total_fuel_litres', 'fuel_litres_per_km',
+        'total_km', 'total_fuel_litres',
+        'fuel_litres_per_km',        # per-trip efficiency
+        'window_fuel_per_km',        # fuelling-cycle efficiency
+        'nearby_prov_fuel',          # raw nearby fuel quantity
+        'nearby_window_km',          # total km in the ±3 day window
+        'fuel_source_reliability',   # 0=missing → 3=invoice
+        'odometer_gap',              # undocumented distance between trips
         'weekly_avg_distance_km', 'weekly_avg_fuel_litres',
         'dist_to_weekly_ratio', 'fuel_to_weekly_ratio',
-        'dist_to_monthly_ratio', 'fuel_to_monthly_ratio'
-    ]
+        'dist_to_monthly_ratio', 'fuel_to_monthly_ratio']
 
     df_modeling = df_pool.dropna(subset=base_features).copy()
     scaler = StandardScaler()
@@ -272,11 +286,6 @@ def contamination_sensitivity_check(df_pool, rates=None):
 def execute_full_audit_pipeline(df_raw, contamination=0.03):
     """Complete Pipeline Orchestration Block."""
     df_features = df_raw.copy()
-    
-    df_features['dist_to_weekly_ratio'] = df_features.apply(lambda r: r['total_km'] / r['weekly_avg_distance_km'] if r['weekly_avg_distance_km'] > 0 else 1.0, axis=1)
-    df_features['fuel_to_weekly_ratio'] = df_features.apply(lambda r: r['total_fuel_litres'] / r['weekly_avg_fuel_litres'] if r['weekly_avg_fuel_litres'] > 0 else 1.0, axis=1)
-    df_features['dist_to_monthly_ratio'] = df_features.apply(lambda r: r['total_km'] / r['monthly_avg_distance_km'] if r['monthly_avg_distance_km'] > 0 else 1.0, axis=1)
-    df_features['fuel_to_monthly_ratio'] = df_features.apply(lambda r: r['total_fuel_litres'] / r['monthly_avg_fuel_litres'] if r['monthly_avg_fuel_litres'] > 0 else 1.0, axis=1)
 
     df_pool, df_deterministic = extract_deterministic_outliers(df_features)
     (df_clean, df_statistical,
