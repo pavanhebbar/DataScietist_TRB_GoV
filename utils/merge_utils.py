@@ -102,8 +102,8 @@ def build_unified_ml_dataset(df_log1, df_log2, df_invoices):
         if pd.isna(row['date']):
             continue
         matching_inv = inv[
-            (inv['date'] >= row['date']) & 
-            (inv['date'] <= row['date'] + pd.Timedelta(days=7))
+            (inv['date'] >= row['date'] - pd.Timedelta(days=2)) & 
+            (inv['date'] <= row['date'] + pd.Timedelta(days=2))
         ]
         if not matching_inv.empty:
             target_inv = matching_inv.sort_values('date').iloc[0]
