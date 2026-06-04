@@ -64,30 +64,32 @@ def build_nearby_fuel_lookup(df, window_days=3):
 
 def reconcile_fuel_sources(df, window_days=3):
     """
-    Builds total_fuel_litres and fuel_source using three-tier priority:
-    1. invoice     — verified Textract extract, matched within ±3 days
-    2. provincial_log — self-reported, matched within ±3 day window
-    3. missing     — no fuel record of any kind within ±3 days
+    Three-tier fuel source priority:
+    1. invoice              — Textract-verified, matched within ±window_days
+    2. provincial_log       — self-reported, present on this exact row
+    3. provincial_log_nearby — self-reported, nearest cycle fuel within
+                               window_days of this trip
+    4. missing              — no fuel record within window_days in either
+                               direction; trip is unverifiable
 
-    Also returns nearby_window_km for window-level efficiency calculation.
+    window_days is the maximum acceptable gap to the nearest fuel event.
+    Beyond this, the trip has no verifiable fuel anchor for IFTA purposes.
     """
-    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel']
+    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel', 'sk_fuel']
     provincial_sum = df[fuel_cols].sum(axis=1, min_count=1)
     provincial_sum = provincial_sum.where(provincial_sum > 0)
 
-    nearby_prov_fuel, nearby_window_km = build_nearby_fuel_lookup(
-        df, window_days=window_days
-    )
+    km_per_tank, avg_fuel_per_tank, min_gap_days = \
+        calculate_fuelling_cycle_features(df, max_gap_days=window_days)
 
-    has_invoice      = df['matching_invoice_number'] != 'NO MATCHING INVOICE'
-    has_row_fuel     = provincial_sum.notna()
-    has_nearby_fuel  = nearby_prov_fuel.notna()
+    has_invoice    = df['matching_invoice_number'] != 'NO MATCHING INVOICE'
+    has_row_fuel   = provincial_sum.notna()
+    has_cycle_fuel = min_gap_days <= window_days  # at least one fill-up nearby
 
-    # Priority: invoice → same-row provincial → nearby provincial → missing
     conditions = [
         has_invoice,
-        has_row_fuel & ~has_invoice,
-        has_nearby_fuel & ~has_row_fuel & ~has_invoice,
+        has_row_fuel   & ~has_invoice,
+        has_cycle_fuel & ~has_row_fuel & ~has_invoice,
     ]
     choices = ['invoice', 'provincial_log', 'provincial_log_nearby']
 
@@ -96,52 +98,42 @@ def reconcile_fuel_sources(df, window_days=3):
         index=df.index
     )
 
-    # Total fuel: invoice/row fuel takes priority, nearby fills gaps
-    total_fuel = provincial_sum.combine_first(nearby_prov_fuel)
+    # Row-level fuel takes priority; cycle average fills gaps
+    total_fuel = provincial_sum.combine_first(avg_fuel_per_tank)
 
-    return total_fuel, fuel_source, nearby_prov_fuel, nearby_window_km
+    return total_fuel, fuel_source, km_per_tank, avg_fuel_per_tank
 
 
 def calculate_efficiency_and_costs(df, window_days=3):
     """
-    Computes two complementary efficiency metrics:
-
-    trip_fuel_per_km:   provincial_sum  ÷ total_km
-                        Single-trip efficiency — catches per-trip anomalies
-
-    window_fuel_per_km: nearby_prov_fuel ÷ nearby_window_km
-                        Fuelling-cycle efficiency — catches patterns that
-                        look fine per trip but anomalous over a cycle
-
-    Both are retained as features. In an IFTA audit, auditors examine both
-    the individual receipt and the overall fuelling pattern.
+    trip_fuel_per_km:  total_fuel  ÷ total_km   — single trip signal
+    cycle_fuel_per_km: avg_fuel_per_tank ÷ km_per_tank — tank range signal
     """
-    total_fuel, fuel_source, nearby_prov_fuel, nearby_window_km = \
+    total_fuel, fuel_source, km_per_tank, avg_fuel_per_tank = \
         reconcile_fuel_sources(df, window_days=window_days)
 
-    # Trip-level efficiency
     trip_fuel_per_km = np.where(
         total_fuel.isna() | (df['total_km'] == 0),
         np.nan,
         total_fuel / df['total_km']
     )
 
-    # Window-level efficiency
-    window_fuel_per_km = np.where(
-        nearby_prov_fuel.isna() | nearby_window_km.isna() | (nearby_window_km == 0),
+    cycle_fuel_per_km = np.where(
+        avg_fuel_per_tank.isna() | km_per_tank.isna() | (km_per_tank == 0),
         np.nan,
-        nearby_prov_fuel / nearby_window_km
+        avg_fuel_per_tank / km_per_tank
     )
 
-    # Cost per km (uses verified total_cost only)
     fuel_cost_per_km = np.where(
         df['total_cost'].isna() | (df['total_km'] == 0),
         np.nan,
         df['total_cost'] / df['total_km']
     )
 
-    return (total_fuel, fuel_source, nearby_prov_fuel, nearby_window_km,
-            trip_fuel_per_km, window_fuel_per_km, fuel_cost_per_km)
+    return (total_fuel, fuel_source,
+            km_per_tank, avg_fuel_per_tank,
+            trip_fuel_per_km, cycle_fuel_per_km,
+            fuel_cost_per_km)
 
 
 def calculate_provincial_sum_km(df):
@@ -314,44 +306,132 @@ def flag_cross_border_trips(df):
         (origin_prov != dest_prov).astype(int)
     )
 
+
+def calculate_fuelling_cycle_features(df, max_gap_days=3):
+    """
+    For each trip, finds the fuelling cycle it belongs to by locating the 
+    nearest preceding and following fuel purchase events.
+
+    Returns:
+      km_per_tank:       Total km driven across ALL trips between the two 
+                         surrounding fuel events. Shared by all trips in the 
+                         same cycle. Physically validates tank range.
+      avg_fuel_per_tank: Average of the two surrounding fill-up quantities.
+                         Used as the denominator-neutral fuel estimate for 
+                         cycle efficiency.
+      min_gap_days:      Days to the nearest fuel event in either direction.
+                         Controls fuel_source = 'missing' when > max_gap_days.
+
+    IFTA context: auditors think in fuelling cycles, not fixed date windows.
+    A truck with a 400L tank cannot travel 3000 km between fill-ups.
+    The ±max_gap_days constraint flags trips with no fuel record nearby,
+    which in an IFTA audit means the distance is unverifiable.
+    """
+    fuel_cols = ['ab_fuel', 'bc_fuel', 'mb_fuel', 'on_fuel', 'sk_fuel']
+    prov_fuel_sum = df[fuel_cols].sum(axis=1, min_count=1)
+    prov_fuel_sum = prov_fuel_sum.where(prov_fuel_sum > 0)
+
+    # Aggregate by date — multiple fill-ups on same day are summed
+    fuel_events = (
+        pd.Series(prov_fuel_sum.values, index=df['trip_date'])
+        .dropna()
+        .groupby(level=0)
+        .sum()
+        .sort_index()
+    )
+
+    km_by_date = (
+        pd.Series(df['total_km'].values, index=df['trip_date'])
+        .groupby(level=0)
+        .sum()
+        .sort_index()
+    )
+
+    fuel_dates        = fuel_events.index
+    km_per_tank       = pd.Series(np.nan, index=df.index)
+    avg_fuel_per_tank = pd.Series(np.nan, index=df.index)
+    min_gap_days      = pd.Series(np.inf, index=df.index)
+
+    for idx, trip_date in zip(df.index, df['trip_date']):
+        if pd.isna(trip_date):
+            continue
+
+        # searchsorted: pos = insertion point after all equal values
+        pos = fuel_dates.searchsorted(trip_date, side='right')
+
+        prev_fuel_date = fuel_dates[pos - 1] if pos > 0 else None
+        next_fuel_date = fuel_dates[pos]     if pos < len(fuel_dates) else None
+
+        prev_gap = (trip_date - prev_fuel_date).days \
+                   if prev_fuel_date is not None else np.inf
+        next_gap = (next_fuel_date - trip_date).days \
+                   if next_fuel_date is not None else np.inf
+
+        min_gap_days[idx] = min(prev_gap, next_gap)
+
+        # --- km_per_tank: all km strictly between the two fuel events ---
+        if prev_fuel_date is not None and next_fuel_date is not None:
+            # Trips after prev fill-up up to and including next fill-up date
+            cycle_km = km_by_date[
+                (km_by_date.index > prev_fuel_date) &
+                (km_by_date.index <= next_fuel_date)
+            ].sum()
+            km_per_tank[idx]       = cycle_km if cycle_km > 0 else np.nan
+            avg_fuel_per_tank[idx] = (
+                fuel_events[prev_fuel_date] + fuel_events[next_fuel_date]
+            ) / 2
+
+        # Edge case: trip is before any fill-up
+        elif next_fuel_date is not None:
+            cycle_km = km_by_date[
+                km_by_date.index <= next_fuel_date
+            ].sum()
+            km_per_tank[idx]       = cycle_km if cycle_km > 0 else np.nan
+            avg_fuel_per_tank[idx] = fuel_events[next_fuel_date]
+
+        # Edge case: trip is after the last fill-up
+        elif prev_fuel_date is not None:
+            cycle_km = km_by_date[
+                km_by_date.index > prev_fuel_date
+            ].sum()
+            km_per_tank[idx]       = cycle_km if cycle_km > 0 else np.nan
+            avg_fuel_per_tank[idx] = fuel_events[prev_fuel_date]
+
+    return km_per_tank, avg_fuel_per_tank, min_gap_days
+
 # =====================================================================
 # 2. MASTER ORCHESTRATOR PIPELINE
 # =====================================================================
 
 def engineer_ifta_features(df_ml_ready, window_days=3):
-    """Add engineered features."""
     df_feat = df_ml_ready.copy()
 
-    # Module 1: Reconciled fuel + dual efficiency metrics
-    # Unpack all 7 return values — nearby_prov_fuel and nearby_window_km
-    # are now explicit columns, not hidden intermediates
+    # Module 1: Fuel reconciliation + efficiency
     (total_fuel, fuel_source,
-     nearby_prov_fuel, nearby_window_km,
-     trip_fuel_per_km, window_fuel_per_km,
+     km_per_tank, avg_fuel_per_tank,
+     trip_fuel_per_km, cycle_fuel_per_km,
      cost_per_km) = calculate_efficiency_and_costs(df_feat, window_days=window_days)
 
     df_feat['total_fuel_litres']       = total_fuel
     df_feat['fuel_source']             = fuel_source
     df_feat['fuel_source_reliability'] = encode_fuel_source_reliability(fuel_source)
-    df_feat['nearby_prov_fuel']        = nearby_prov_fuel    # ← was missing
-    df_feat['nearby_window_km']        = nearby_window_km    # ← was missing
-    df_feat['fuel_litres_per_km']      = trip_fuel_per_km
-    df_feat['window_fuel_per_km']      = window_fuel_per_km
+    df_feat['km_per_tank']             = km_per_tank       # cycle distance
+    df_feat['avg_fuel_per_tank']       = avg_fuel_per_tank # cycle fuel anchor
+    df_feat['fuel_litres_per_km']      = trip_fuel_per_km  # per-trip signal
+    df_feat['cycle_fuel_per_km']       = cycle_fuel_per_km # tank-range signal
     df_feat['fuel_cost_per_km']        = cost_per_km
 
-    # Module 2: Provincial km sum + mismatch vs total_km
-    df_feat['provincial_sum_km']       = calculate_provincial_sum_km(df_feat)  # ← new
-    df_feat['km_reconciliation_gap']   = (                                      # ← new
+    # Module 2: Provincial km sum + reconciliation gap
+    df_feat['provincial_sum_km']     = calculate_provincial_sum_km(df_feat)
+    df_feat['km_reconciliation_gap'] = (
         df_feat['total_km'] - df_feat['provincial_sum_km']
     ).clip(lower=0)
-    # A non-zero gap means total distance driven exceeds what's jurisdictionally
-    # accounted for — a direct IFTA reporting gap
 
     # Module 3: Odometer continuity
-    df_feat['odometer_gap']            = calculate_odometer_gap(df_feat)
+    df_feat['odometer_gap'] = calculate_odometer_gap(df_feat)
 
-    # Module 4: Cross-border flag (post-hoc filter, not model feature)
-    df_feat['cross_border_trip']       = flag_cross_border_trips(df_feat)
+    # Module 4: Cross-border flag (post-hoc filter only, not in model)
+    df_feat['cross_border_trip'] = flag_cross_border_trips(df_feat)
 
     # Module 5: Jurisdictional proportions
     jurisdiction_features = calculate_jurisdictional_proportions(df_feat, total_fuel)
@@ -360,7 +440,7 @@ def engineer_ifta_features(df_ml_ready, window_days=3):
     # Module 6: Temporal rolling averages
     df_feat = extract_temporal_trends(df_feat)
 
-    # Module 7: Temporal deviation ratios — MUST come after Module 6
-    df_feat = calculate_temporal_ratios(df_feat)    # ← was missing
+    # Module 7: Deviation ratios — must follow Module 6
+    df_feat = calculate_temporal_ratios(df_feat)
 
     return df_feat

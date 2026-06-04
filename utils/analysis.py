@@ -16,15 +16,41 @@ def extract_deterministic_outliers(df):
     """
     print("🧹 Stage 1: Dynamically calculating population Z-scores for deterministic filtering...")
     
-    # 1. Total Distance and Total Fuel absolute bounds (> 3 Sigma)
+    # 1. Total Distance and Total Fuel,  absolute bounds (> 3 Sigma)
     mean_km, std_km = df['total_km'].mean(), df['total_km'].std()
-    mean_fuel, std_fuel = df['total_fuel_litres'].mean(), df['total_fuel_litres'].std()
+    mean_fuel, std_fuel = (
+        df['total_fuel_litres'].mean(), df['total_fuel_litres'].std())
     
     rule_dist_z = df['total_km'] > (mean_km + 3 * std_km)
     rule_fuel_z = df['total_fuel_litres'] > (mean_fuel + 3 * std_fuel)
+
+    # Per tank distance and fuel absolute bounds ( > 3 sigma)
+    mean_avg_fuel, std_avg_fuel = (
+        df['avg_fuel_per_tank'].mean(), df['avg_fuel_per_tank'].std())
+    mean_dist_tank, std_dist_tank = (
+        df['km_per_tank'].mean(), df['km_per_tank'].std())
     
-    # 2. Fuel Intensity bounds (> 3 Sigma)
-    rule_intensity_z = df['fuel_litres_per_km'] > (df['fuel_litres_per_km'].mean() + 3 * df['fuel_litres_per_km'].std())
+    rule_avgfuel_z = (
+        (df['avg_fuel_per_tank'] > (mean_avg_fuel + 3*std_avg_fuel)) |
+        (df['avg_fuel_per_tank'] < 100))
+    rule_avgdist_z = df['km_per_tank'] > (mean_dist_tank + 3*std_dist_tank)
+
+    
+    # 2. Fuel Intensity bounds (> 3 Sigma) and < 0.05 L/km
+    rule_intensity_z1 = (
+        df['fuel_litres_per_km'] > (df['fuel_litres_per_km'].mean() +
+                                    3 * df['fuel_litres_per_km'].std()))
+    rule_intensity_z2 = (
+        df['cycle_fuel_per_km'] > (df['cycle_fuel_per_km'].mean() +
+                                   3 * df['cycle_fuel_per_km'].std()))
+    rule_intensity_z3  = (df['cycle_fuel_per_km'] < 0.05)
+    rule_intensity_z = (rule_intensity_z1 | rule_intensity_z2 |
+                        rule_intensity_z3)
+
+    # Remove clear flags:
+    rule_dist_mismatch = (df['km_reconciliation_gap'] >= 10)
+    rule_missing_fuel = (df['fuel_source_reliability'] == 0)
+    # rule_odometer_gap = (df['odometer_gap'] >= 50)
     
     # 3. IFTA Boundary Compliance Violation (Fuel in Alberta, but 0 Distance)
     rule_ifta_breach = (df['ab_fuel_prop'] == 1.0) & (df['ab_dist_prop'] == 0.0)
@@ -42,31 +68,68 @@ def extract_deterministic_outliers(df):
                                  (df['fuel_to_monthly_ratio'] > (mean_rm_fuel + 3 * std_rm_fuel))
                                  
     # 5. Moving Average Macro-Drift (> 3 Sigma)
-    mean_w_avg_km, std_w_avg_km = df['weekly_avg_distance_km'].mean(), df['weekly_avg_distance_km'].std()
-    mean_w_avg_L, std_w_avg_L = df['weekly_avg_fuel_litres'].mean(), df['weekly_avg_fuel_litres'].std()
-    mean_m_avg_km, std_m_avg_km = df['monthly_avg_distance_km'].mean(), df['monthly_avg_distance_km'].std()
-    mean_m_avg_L, std_m_avg_L = df['monthly_avg_fuel_litres'].mean(), df['monthly_avg_fuel_litres'].std()
+    mean_w_avg_km, std_w_avg_km = (
+        df['weekly_avg_distance_km'].median(),
+        df['weekly_avg_distance_km'].std())
+    mean_w_avg_L, std_w_avg_L = (
+        df['weekly_avg_fuel_litres'].median(),
+        df['weekly_avg_fuel_litres'].std())
+    mean_m_avg_km, std_m_avg_km = (
+        df['monthly_avg_distance_km'].median(),
+        df['monthly_avg_distance_km'].std())
+    mean_m_avg_L, std_m_avg_L = (
+        df['monthly_avg_fuel_litres'].median(),
+        df['monthly_avg_fuel_litres'].std())
     
-    rule_macro_drift = (df['weekly_avg_distance_km'] > (mean_w_avg_km + 3 * std_w_avg_km)) | \
-                        (df['weekly_avg_fuel_litres'] > (mean_w_avg_L + 3 * std_w_avg_L)) | \
-                        (df['monthly_avg_distance_km'] > (mean_m_avg_km + 3 * std_m_avg_km)) | \
-                        (df['monthly_avg_fuel_litres'] > (mean_m_avg_L + 3 * std_m_avg_L))
+    rule_macro_drift_week = (
+        (df['weekly_avg_distance_km'] > (mean_w_avg_km + 3 * std_w_avg_km)) |
+        (df['weekly_avg_fuel_litres'] > (mean_w_avg_L + 3 * std_w_avg_L)) |
+        (
+            (df['weekly_avg_distance_km'] > 0) &
+            (
+                (df['weekly_avg_distance_km'] < (mean_w_avg_km -
+                                                 3 * std_w_avg_km)) |
+                (df['weekly_avg_fuel_litres'] < (mean_w_avg_L -
+                                                 3 * std_w_avg_L))
+            )
+            )
+)
+
+    rule_macro_drift_month = (
+        (df['monthly_avg_distance_km'] > (mean_m_avg_km + 3 * std_m_avg_km)) |
+        (df['monthly_avg_fuel_litres'] > (mean_m_avg_L + 3 * std_m_avg_L)) |
+        (
+            (df['monthly_avg_distance_km'] > 0) &
+            (
+                (df['monthly_avg_distance_km'] < (mean_m_avg_km -
+                                                  3 * std_m_avg_km)) |
+                (df['monthly_avg_fuel_litres'] < (mean_m_avg_L -
+                                                  3 * std_m_avg_L))
+            )
+        )
+    )
 
     # Master logical OR to catch all deterministic violations
     deterministic_mask = (
-        rule_dist_z | rule_fuel_z | rule_intensity_z | 
-        rule_ifta_breach | rule_weekly_ratio_outlier | 
-        rule_monthly_ratio_outlier | rule_macro_drift
+        rule_dist_z | rule_fuel_z | rule_intensity_z |
+        rule_dist_mismatch | rule_missing_fuel | # rule_odometer_gap |
+        rule_avgdist_z | rule_avgfuel_z | rule_ifta_breach |
+        rule_weekly_ratio_outlier | rule_monthly_ratio_outlier |
+        rule_macro_drift_week | rule_macro_drift_month
     )
     
     # Split the dataset
     df_breaches = df[deterministic_mask].copy()
     df_clean_pool = df[~deterministic_mask].copy()
     
-    df_breaches['anomaly_source'] = 'Deterministic Z-Score Rule'
+    df_breaches['anomaly_source'] = 'Deterministic'
     df_breaches['anomaly_score'] = -1.0
     df_breaches['Primary Driver'] = 'Rule-Based Violation'
     df_breaches['Secondary Driver'] = 'None'
+    # odometer_breach = (df_breaches['odometer_gap'] > 50)
+    # df_breaches['Secondary Driver'][odometer_breach] = 'Odometer gap'
+    dist_mismatch = (df_breaches['km_reconciliation_gap'] >= 10)
+    df_breaches['Secondary Driver'][dist_mismatch] = 'Distance mismatch'
     df_breaches['Multi-Feature Interaction Spike'] = 'N/A'
     df_breaches['Route Context'] = df_breaches.apply(lambda r: f"{r.get('trip_origin', 'UNK')} ➔ {r.get('trip_destination', 'UNK')}", axis=1)
     
@@ -153,19 +216,19 @@ def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
     base_features = [
         'total_km',
         'total_fuel_litres',
-        'fuel_litres_per_km',
-        'window_fuel_per_km',
-        'nearby_prov_fuel',
-        'nearby_window_km',
-        'provincial_sum_km',
-        'km_reconciliation_gap',
-        'fuel_source_reliability',
-        'odometer_gap',
-        'weekly_avg_distance_km', 'weekly_avg_fuel_litres',
-       'dist_to_weekly_ratio',   'fuel_to_weekly_ratio',
-        'dist_to_monthly_ratio',  'fuel_to_monthly_ratio']
+        'fuel_litres_per_km',        # per-trip efficiency
+        'cycle_fuel_per_km',         # fuelling-cycle efficiency (tank range)
+        'km_per_tank',               # total cycle distance
+        'avg_fuel_per_tank',         # anchor fuel quantity for the cycle
+        'provincial_sum_km',         # jurisdictional km sum
+        'km_reconciliation_gap',     # unaccounted distance
+        'fuel_source_reliability',   # 0=missing → 3=invoice
+        'odometer_gap',              # undocumented km between trips
+        'weekly_avg_distance_km',    'weekly_avg_fuel_litres',
+        'dist_to_weekly_ratio',      'fuel_to_weekly_ratio',
+        'dist_to_monthly_ratio',     'fuel_to_monthly_ratio',
+    ]
 
-    
     provinces = ['ab', 'bc', 'mb', 'on', 'sk']
     jurisdiction_features = []
     for prov in provinces:
@@ -234,16 +297,20 @@ def contamination_sensitivity_check(df_pool, rates=None):
         rates = [0.01, 0.02, 0.03, 0.05, 0.08, 0.10]
 
     base_features = [
-        'total_km', 'total_fuel_litres',
+        'total_km',
+        'total_fuel_litres',
         'fuel_litres_per_km',        # per-trip efficiency
-        'window_fuel_per_km',        # fuelling-cycle efficiency
-        'nearby_prov_fuel',          # raw nearby fuel quantity
-        'nearby_window_km',          # total km in the ±3 day window
+        'cycle_fuel_per_km',         # fuelling-cycle efficiency (tank range)
+        'km_per_tank',               # total cycle distance
+        'avg_fuel_per_tank',         # anchor fuel quantity for the cycle
+        'provincial_sum_km',         # jurisdictional km sum
+        'km_reconciliation_gap',     # unaccounted distance
         'fuel_source_reliability',   # 0=missing → 3=invoice
-        'odometer_gap',              # undocumented distance between trips
-        'weekly_avg_distance_km', 'weekly_avg_fuel_litres',
-        'dist_to_weekly_ratio', 'fuel_to_weekly_ratio',
-        'dist_to_monthly_ratio', 'fuel_to_monthly_ratio']
+        'odometer_gap',              # undocumented km between trips
+        'weekly_avg_distance_km',    'weekly_avg_fuel_litres',
+        'dist_to_weekly_ratio',      'fuel_to_weekly_ratio',
+        'dist_to_monthly_ratio',     'fuel_to_monthly_ratio',
+    ]
 
     df_modeling = df_pool.dropna(subset=base_features).copy()
     scaler = StandardScaler()

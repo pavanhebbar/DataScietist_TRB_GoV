@@ -1,9 +1,9 @@
 Feature,Selection Frequency
-km_reconciliation_gap,1
-dist_to_monthly_ratio,1
-on_dist_prop,1
-mb_fuel_prop,1
-fuel_source_reliability,1
-window_fuel_per_km,1
 on_fuel_prop,1
-mb_dist_prop,1
+total_km,1
+total_fuel_litres,1
+odometer_gap,1
+on_dist_prop,1
+fuel_litres_per_km,1
+fuel_to_monthly_ratio,1
+weekly_avg_fuel_litres,1

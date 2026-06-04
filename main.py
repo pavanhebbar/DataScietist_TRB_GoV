@@ -33,12 +33,12 @@ OUTPUT_DIR = ROOT_DIR  / 'Data' / 'outputs'
 sys.path.insert(0, str(UTILS_DIR))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-from extract_utils import get_dataframe_onefile, run_textract_largepdf, \
-                          get_df_texttables_special
+from extract_utils import get_dataframe_onefile
 from merge_utils import build_unified_ml_dataset
 from feature_engineering import engineer_ifta_features
 from analysis import execute_full_audit_pipeline, \
                      contamination_sensitivity_check
+from visualization import run_full_eda_pipeline
 
 # ── File paths (update filenames to match yours) ──────────────────────────────
 INVOICE_FILE   = RAW_DIR / 'Fuel Invoices.docx'
@@ -112,6 +112,7 @@ def stage3_features(df_ml):
 
     print(f"\n   Feature matrix: {df_feat.shape[0]} rows × {df_feat.shape[1]} cols")
     _save(df_feat, 'featured_dataset.csv')
+    # run_full_eda_pipeline(df_feat)
     return df_feat
 
 
@@ -134,7 +135,7 @@ def stage4_analysis(df_feat):
     _save(df_audit,      'audit_ledger.csv')
     _save(df_clean,      'clean_trips.csv')
     _save(df_importance, 'feature_importance.csv')
-
+    print(df_audit)
     return df_clean, df_audit, df_importance
 
 
