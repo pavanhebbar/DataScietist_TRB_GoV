@@ -246,21 +246,37 @@ def calculate_temporal_ratios(df):
 
 def calculate_odometer_gap(df):
     """
-    Difference between a trip's start_odometer and the previous trip's 
-    end_odometer. A large gap means undocumented distance — the single 
-    biggest red flag in IFTA audits.
-    
-    IFTA context: if end_odometer is 50,000 and next trip starts at 51,200,
-    there are 1,200 undocumented km that need to be explained.
+    Flags trips where the start_odometer of a trip doesn't follow on from
+    the end_odometer of the previous trip for the SAME truck.
+
+    Computed per source_log (truck) to avoid false gaps at the boundary
+    between Log 1 (2016-2021) and Log 2 (2022), which are two different
+    vehicles with independent odometer sequences.
+
+    Returns a binary flag: 1 if undocumented gap > 50 km, 0 otherwise.
+    NaN where odometer data is missing for either the current or prior trip.
+
+    IFTA context: a 50 km gap means ~50 km of unlogged distance that cannot
+    be allocated to any jurisdiction — a direct compliance failure.
     """
     df_sorted = df.sort_values('trip_date').copy()
-    df_sorted['prev_end_odometer'] = df_sorted['end_odometer'].shift(1)
-    df_sorted['odometer_gap'] = (
-        df_sorted['start_odometer'] - df_sorted['prev_end_odometer']
+
+    # Shift within each truck's log — never carry the last row of Log 1
+    # into the first row of Log 2
+    df_sorted['prev_end_odometer'] = (
+        df_sorted.groupby('source_log')['end_odometer'].shift(1)
     )
-    # Negative gaps = odometer reset or data error, treat as missing
-    df_sorted['odometer_gap'] = df_sorted['odometer_gap'].clip(lower=0)
-    return df_sorted['odometer_gap']
+
+    raw_gap = (
+        df_sorted['start_odometer'] - df_sorted['prev_end_odometer']
+    ).clip(lower=0)
+
+    # Binary flag — NaN when either odometer reading is missing
+    has_both = df_sorted['start_odometer'].notna() & df_sorted['prev_end_odometer'].notna()
+    odometer_gap_flag = pd.Series(np.nan, index=df_sorted.index)
+    odometer_gap_flag[has_both] = (raw_gap[has_both] > 50).astype(int)
+
+    return odometer_gap_flag
 
 
 def encode_fuel_source_reliability(fuel_source_series):

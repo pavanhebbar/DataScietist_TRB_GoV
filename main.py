@@ -112,7 +112,7 @@ def stage3_features(df_ml):
 
     print(f"\n   Feature matrix: {df_feat.shape[0]} rows × {df_feat.shape[1]} cols")
     _save(df_feat, 'featured_dataset.csv')
-    # run_full_eda_pipeline(df_feat)
+    #run_full_eda_pipeline(df_feat)
     return df_feat
 
 

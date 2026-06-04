@@ -79,64 +79,122 @@ def plot_efficiency_distributions_hybrid(
         df, save_path='eda_2_efficiency_distributions.png'):
     """
     2. Hybrid Distribution Check:
-    - Fuel Intensity (L/km): Includes ALL records, plus highlights and labels the severe > 2.5 L/km outlier.
-    - Cost Efficiency ($/km): Includes VOUCHED records ONLY to prevent artificial $0 skew.
+    - Left: Fuel Intensity (L/km) — all records. Annotates > 2.5 L/km.
+    - Right: Cost Efficiency ($/km) — vouched records only.
+      Annotates cost > $1.00/km (inflated) and < $0.10/km (suspiciously cheap).
     """
     fig, axes = plt.subplots(1, 2, figsize=(18, 7))
     datasets = {
         'fuel_litres_per_km': df.copy(),
-        # Replace is_unvouched_trip==0 with invoice-only
-        'fuel_cost_per_km': df[df['fuel_source'] == 'invoice']
+        'fuel_cost_per_km':   df[df['fuel_source'] == 'invoice'].copy()
     }
-    metrics = ['fuel_litres_per_km', 'fuel_cost_per_km']
-    colors = ['#27ae60', '#2980b9']
-    titles = ['Fleet Distribution: Fuel Intensity (All Trips)', 'Vouched Distribution: Cost Efficiency (Invoiced Only)']
+    metrics  = ['fuel_litres_per_km', 'fuel_cost_per_km']
+    colors   = ['#27ae60', '#2980b9']
+    titles   = [
+        'Fleet Distribution: Fuel Intensity (All Trips)',
+        'Vouched Distribution: Cost Efficiency (Invoiced Only)'
+    ]
     x_labels = ['Fuel Intensity (L/km)', 'Cost Efficiency ($/km)']
-    
+
     for idx, col in enumerate(metrics):
-        target_df = datasets[col]
+        target_df   = datasets[col]
         data_series = target_df[col].dropna()
-        
-        # Plot histogram and extract bin/count data to place annotation comfortably
-        n, bins, patches = axes[idx].hist(data_series, bins=12, color=colors[idx], edgecolor='black', alpha=0.7)
-        sns.kdeplot(data_series, ax=axes[idx], color=colors[idx], linewidth=2, linestyle='-')
-        
+
+        n, bins, patches = axes[idx].hist(
+            data_series, bins=12, color=colors[idx],
+            edgecolor='black', alpha=0.7
+        )
+        sns.kdeplot(data_series, ax=axes[idx], color=colors[idx],
+                    linewidth=2, linestyle='-')
+
         mean_val = data_series.mean()
-        std_val = data_series.std()
-        
-        axes[idx].axvline(mean_val, color='black', linestyle='-', linewidth=2, label=f'Mean: {mean_val:.2f}')
+        std_val  = data_series.std()
+
+        axes[idx].axvline(mean_val, color='black', linestyle='-',
+                          linewidth=2, label=f'Mean: {mean_val:.2f}')
         for i in [1, 2, 3]:
-            color = '#e67e22' if i == 1 else ('#d35400' if i == 2 else '#c0392b')
+            c  = '#e67e22' if i == 1 else ('#d35400' if i == 2 else '#c0392b')
             ls = '--' if i == 1 else (':' if i == 2 else '-.')
             if (mean_val - i * std_val) >= 0:
-                axes[idx].axvline(
-                    mean_val - i * std_val, color=color, linestyle=ls,
-                    alpha=0.6)
-            axes[idx].axvline(mean_val + i * std_val, color=color, linestyle=ls, alpha=0.6)
-            
-        # Target Annotation for the massive fuel intensity spike (>2.5 L/km) on Subplot 0
+                axes[idx].axvline(mean_val - i * std_val, color=c,
+                                  linestyle=ls, alpha=0.6)
+            axes[idx].axvline(mean_val + i * std_val, color=c,
+                              linestyle=ls, alpha=0.6)
+
+        # ── Left panel: fuel intensity outliers > 2.5 L/km ──────────────
         if col == 'fuel_litres_per_km':
-            intensity_outliers = target_df[
-                target_df['fuel_litres_per_km'] > 2.5]
-            if not intensity_outliers.empty:
-                for enum_idx, (o_idx, o_row) in enumerate(
-                            intensity_outliers.iterrows()):
-                    y_text_position = max(n) * (0.55 - (enum_idx * 0.18))
-                    axes[idx].annotate(
-                        f"Critical Intensity Spike\nRoute: {o_row['trip_origin']} ➔ {o_row['trip_destination']}\nValue: {o_row['fuel_litres_per_km']:.2f} L/km",
-                        xy=(o_row['fuel_litres_per_km'], 1),  # Pointing near the bottom of the outlier bin
-                        xytext=(o_row['fuel_litres_per_km'] - 1,
-                                y_text_position),  # Shifted left
-                        arrowprops=dict(facecolor='black', shrink=0.1, width=1, headwidth=6),
-                        fontsize=10, fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.3", fc="#fce4d6", ec="#c0392b", lw=1.5)
-                    )
-            
+            intensity_outliers = target_df[target_df['fuel_litres_per_km'] > 2.5]
+            for enum_idx, (_, o_row) in enumerate(intensity_outliers.iterrows()):
+                y_pos = max(n) * (0.55 - enum_idx * 0.18)
+                axes[idx].annotate(
+                    f"Critical Intensity Spike\n"
+                    f"Route: {o_row['trip_origin']} ➔ {o_row['trip_destination']}\n"
+                    f"Value: {o_row['fuel_litres_per_km']:.2f} L/km",
+                    xy=(o_row['fuel_litres_per_km'], 1),
+                    xytext=(o_row['fuel_litres_per_km'] - 1, y_pos),
+                    arrowprops=dict(facecolor='black', shrink=0.1,
+                                   width=1, headwidth=6),
+                    fontsize=10, fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              fc="#fce4d6", ec="#c0392b", lw=1.5)
+                )
+
+        # ── Right panel: cost outliers > $1.00/km and < $0.10/km ────────
+        if col == 'fuel_cost_per_km':
+            # Reference threshold lines
+            axes[idx].axvline(
+                1.0, color='#c0392b', linestyle='-', linewidth=1.5,
+                alpha=0.8, label='Upper bound: $1.00/km'
+            )
+            axes[idx].axvline(
+                0.10, color='#e67e22', linestyle='-', linewidth=1.5,
+                alpha=0.8, label='Lower bound: $0.10/km'
+            )
+
+            high_cost = target_df[target_df['fuel_cost_per_km'] > 0.9]
+            low_cost  = target_df[
+                target_df['fuel_cost_per_km'].notna() &
+                (target_df['fuel_cost_per_km'] > 0) &   # exclude true zeros
+                (target_df['fuel_cost_per_km'] < 0.10)
+            ]
+
+            # Annotate high-cost outliers
+            for enum_idx, (_, o_row) in enumerate(high_cost.iterrows()):
+                y_pos = max(n) * (0.55 - enum_idx * 0.18)
+                axes[idx].annotate(
+                    f"High Cost Alert\n"
+                    f"Route: {o_row['trip_origin']} ➔ {o_row['trip_destination']}\n"
+                    f"Value: ${o_row['fuel_cost_per_km']:.2f}/km",
+                    xy=(o_row['fuel_cost_per_km'], 1),
+                    xytext=(o_row['fuel_cost_per_km'] + 0.5, y_pos),
+                    arrowprops=dict(facecolor='black', shrink=0.1,
+                                   width=1, headwidth=6),
+                    fontsize=10, fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              fc="#fce4d6", ec="#c0392b", lw=1.5)
+                )
+
+            # Annotate suspiciously cheap outliers
+            for enum_idx, (_, o_row) in enumerate(low_cost.iterrows()):
+                y_pos = max(n) * (0.40 - enum_idx * 0.12)
+                axes[idx].annotate(
+                    f"Suspiciously Low Cost\n"
+                    f"Route: {o_row['trip_origin']} ➔ {o_row['trip_destination']}\n"
+                    f"Value: ${o_row['fuel_cost_per_km']:.2f}/km",
+                    xy=(o_row['fuel_cost_per_km'], 1),
+                    xytext=(o_row['fuel_cost_per_km'] - 0.5, y_pos),
+                    arrowprops=dict(facecolor='black', shrink=0.1,
+                                   width=1, headwidth=6),
+                    fontsize=10, fontweight='bold',
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              fc="#fff9c4", ec="#e67e22", lw=1.5)
+                )
+
         axes[idx].set_title(titles[idx], fontweight='bold', fontsize=12)
         axes[idx].set_xlabel(x_labels[idx])
         axes[idx].set_ylabel('Frequency')
         axes[idx].legend(frameon=True, fontsize=10)
-        
+
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.show()

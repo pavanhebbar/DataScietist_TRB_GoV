@@ -46,11 +46,14 @@ def extract_deterministic_outliers(df):
     rule_intensity_z3  = (df['cycle_fuel_per_km'] < 0.05)
     rule_intensity_z = (rule_intensity_z1 | rule_intensity_z2 |
                         rule_intensity_z3)
+    
+    # Fuel cost
+    rule_cost_high = (df['fuel_cost_per_km'] > 1)
 
     # Remove clear flags:
     rule_dist_mismatch = (df['km_reconciliation_gap'] >= 10)
     rule_missing_fuel = (df['fuel_source_reliability'] == 0)
-    # rule_odometer_gap = (df['odometer_gap'] >= 50)
+    rule_odometer_gap = (df['odometer_gap'] == 1)
     
     # 3. IFTA Boundary Compliance Violation (Fuel in Alberta, but 0 Distance)
     rule_ifta_breach = (df['ab_fuel_prop'] == 1.0) & (df['ab_dist_prop'] == 0.0)
@@ -111,8 +114,8 @@ def extract_deterministic_outliers(df):
 
     # Master logical OR to catch all deterministic violations
     deterministic_mask = (
-        rule_dist_z | rule_fuel_z | rule_intensity_z |
-        rule_dist_mismatch | rule_missing_fuel | # rule_odometer_gap |
+        rule_dist_z | rule_fuel_z | rule_intensity_z | rule_cost_high |
+        rule_dist_mismatch | rule_missing_fuel | rule_odometer_gap |
         rule_avgdist_z | rule_avgfuel_z | rule_ifta_breach |
         rule_weekly_ratio_outlier | rule_monthly_ratio_outlier |
         rule_macro_drift_week | rule_macro_drift_month
@@ -124,19 +127,123 @@ def extract_deterministic_outliers(df):
     
     df_breaches['anomaly_source'] = 'Deterministic'
     df_breaches['anomaly_score'] = -1.0
-    df_breaches['Primary Driver'] = 'Rule-Based Violation'
-    df_breaches['Secondary Driver'] = 'None'
-    # odometer_breach = (df_breaches['odometer_gap'] > 50)
-    # df_breaches['Secondary Driver'][odometer_breach] = 'Odometer gap'
-    dist_mismatch = (df_breaches['km_reconciliation_gap'] >= 10)
-    df_breaches['Secondary Driver'][dist_mismatch] = 'Distance mismatch'
+    # ── Primary Driver: first matching rule wins (priority order) ────────
+    # Reindex each rule mask to df_breaches so np.select works correctly
+    _b = df_breaches.index
+    primary_conditions = [
+        rule_missing_fuel.reindex(_b, fill_value=False),
+        rule_odometer_gap.reindex(_b, fill_value=False),
+        rule_dist_mismatch.reindex(_b, fill_value=False),
+        (rule_dist_z | rule_fuel_z |
+         rule_avgfuel_z | rule_avgdist_z).reindex(_b, fill_value=False),
+        (rule_intensity_z | rule_ifta_breach).reindex(_b, fill_value=False),
+        rule_cost_high.reindex(_b, fill_value=False),
+        (rule_weekly_ratio_outlier | rule_monthly_ratio_outlier |
+         rule_macro_drift_week | rule_macro_drift_month).reindex(
+             _b, fill_value=False),
+    ]
+    primary_labels = [
+        'Missing fuel',
+        'Odometer gap',
+        'Distance mismatch',
+        'Fuel quantity or km',
+        'Fuel efficiency mismatch',
+        'Fuel cost eff mismatch',
+        'Temporal trend mismatch',
+    ]
+    df_breaches['Primary Driver'] = np.select(
+        primary_conditions, primary_labels, default='Rule-Based Violation'
+    )
+
+    # ── Secondary Driver: next co-occurring rule, excluding the primary ──
+    secondary_conditions = [
+        (df_breaches['Primary Driver'] != 'Distance mismatch') &
+        rule_dist_mismatch.reindex(_b, fill_value=False),
+
+        (df_breaches['Primary Driver'] != 'Temporal trend mismatch') &
+        (rule_weekly_ratio_outlier | rule_monthly_ratio_outlier |
+         rule_macro_drift_week | rule_macro_drift_month).reindex(
+             _b, fill_value=False),
+
+        (df_breaches['Primary Driver'] != 'Fuel efficiency mismatch') &
+        (rule_intensity_z | rule_ifta_breach).reindex(_b, fill_value=False),
+
+        (df_breaches['Primary Driver'] != 'Fuel quantity or km') &
+        (rule_dist_z | rule_fuel_z |
+         rule_avgfuel_z | rule_avgdist_z).reindex(_b, fill_value=False),
+
+        (df_breaches['Primary Driver'] != 'Fuel cost eff mismatch') &
+        rule_cost_high.reindex(_b, fill_value=False),
+    ]
+    secondary_labels = [
+        'Distance mismatch',
+        'Temporal trend mismatch',
+        'Fuel efficiency mismatch',
+        'Fuel quantity or km',
+        'Fuel cost eff mismatch'
+    ]
+    df_breaches['Secondary Driver'] = np.select(
+        secondary_conditions, secondary_labels, default='None'
+    )
+
     df_breaches['Multi-Feature Interaction Spike'] = 'N/A'
     df_breaches['Route Context'] = df_breaches.apply(lambda r: f"{r.get('trip_origin', 'UNK')} ➔ {r.get('trip_destination', 'UNK')}", axis=1)
     
     print(f"   👉 Isolated {len(df_breaches)} records violating the > 3σ or IFTA constraints.")
     print(f"   👉 Kept {len(df_clean_pool)} records for unsupervised Isolation Forest modeling.")
     
+    _print_driver_summary(df_breaches)
     return df_clean_pool, df_breaches
+
+
+def _print_driver_summary(df_breaches):
+    """
+    Prints a formatted terminal table showing how many flagged records
+    each rule category contributes to as Primary or Secondary Driver.
+    Called automatically at the end of extract_deterministic_outliers.
+    """
+    all_drivers = [
+        'Missing fuel',
+        'Odometer gap',
+        'Distance mismatch',
+        'Fuel quantity or km',
+        'Fuel efficiency mismatch',
+        'Temporal trend mismatch',
+        'Fuel cost eff mismatch',
+        'Rule-Based Violation',   # fallback — should ideally be 0
+    ]
+
+    primary_counts = df_breaches['Primary Driver'].value_counts()
+
+    # Exclude 'None' from secondary — it means no co-occurring rule fired
+    secondary_counts = df_breaches[
+        df_breaches['Secondary Driver'] != 'None'
+    ]['Secondary Driver'].value_counts()
+
+    # Build rows — only include drivers that appear at least once
+    rows = []
+    for driver in all_drivers:
+        p = primary_counts.get(driver, 0)
+        s = secondary_counts.get(driver, 0)
+        if p > 0 or s > 0:
+            rows.append((driver, p, s, p + s))
+
+    # Sort by total contribution descending
+    rows.sort(key=lambda x: x[3], reverse=True)
+
+    w = 30   # driver name column width
+    print(f"\n   {'📋 Deterministic Audit Ledger — Driver Contribution Summary'}")
+    print(f"   {'═' * 62}")
+    print(f"   {'Driver Category':<{w}}  {'Primary':>8}  {'Secondary':>10}  {'Total':>7}")
+    print(f"   {'─' * 62}")
+    for driver, p, s, total in rows:
+        print(f"   {driver:<{w}}  {p:>8}  {s:>10}  {total:>7}")
+    print(f"   {'─' * 62}")
+    n_with_secondary = (df_breaches['Secondary Driver'] != 'None').sum()
+    print(f"   {'Total flagged records':<{w}}  "
+          f"{len(df_breaches):>8}  {n_with_secondary:>10}  {'—':>7}")
+    print(f"   {'═' * 62}\n")
+
 
 def extract_robust_anomaly_reasons(iso_forest, df_statistical, X_scaled, features):
     """
@@ -218,6 +325,7 @@ def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
         'total_fuel_litres',
         'fuel_litres_per_km',        # per-trip efficiency
         'cycle_fuel_per_km',         # fuelling-cycle efficiency (tank range)
+        'fuel_cost_per_km',
         'km_per_tank',               # total cycle distance
         'avg_fuel_per_tank',         # anchor fuel quantity for the cycle
         'provincial_sum_km',         # jurisdictional km sum
@@ -300,6 +408,7 @@ def contamination_sensitivity_check(df_pool, rates=None):
         'total_km',
         'total_fuel_litres',
         'fuel_litres_per_km',        # per-trip efficiency
+        'fuel_cost_per_km',
         'cycle_fuel_per_km',         # fuelling-cycle efficiency (tank range)
         'km_per_tank',               # total cycle distance
         'avg_fuel_per_tank',         # anchor fuel quantity for the cycle
