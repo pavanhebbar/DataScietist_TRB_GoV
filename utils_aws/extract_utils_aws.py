@@ -20,6 +20,220 @@ from textractor import Textractor
 from textractor.data.constants import TextractFeatures
 
 
+# ── Column alias maps ─────────────────────────────────────────────────────────
+# Maps every known variation → standard column name
+# Matching is done on lowercased, stripped, whitespace-normalized column names
+
+DISTANCE_COLUMN_ALIASES = {
+    # trip_date
+    'date': 'trip_date', 'trip date': 'trip_date',
+    'trip_date': 'trip_date',
+
+    # trip_origin
+    'origin': 'trip_origin', 'trip origin': 'trip_origin',
+    'trip_origin': 'trip_origin', 'starting point': 'trip_origin',
+    'start location': 'trip_origin', 'from': 'trip_origin',
+
+    # trip_destination
+    'destination': 'trip_destination', 'trip destination': 'trip_destination',
+    'trip_destination': 'trip_destination', 'to': 'trip_destination',
+    'end location': 'trip_destination',
+
+    # trip_start_time
+    'start time': 'trip_start_time', 'trip_start_time': 'trip_start_time',
+    'trip start time': 'trip_start_time', 'departure time': 'trip_start_time',
+
+    # trip_end_time
+    'end time': 'trip_end_time', 'trip_end_time': 'trip_end_time',
+    'trip end time': 'trip_end_time', 'arrival time': 'trip_end_time',
+
+    # start_odometer
+    'start_odometer': 'start_odometer', 'start odometer': 'start_odometer',
+    'start km': 'start_odometer', 'start kms': 'start_odometer',
+    'odometer start': 'start_odometer', 'begin odometer': 'start_odometer',
+
+    # end_odometer
+    'end_odometer': 'end_odometer', 'end odometer': 'end_odometer',
+    'end km': 'end_odometer', 'end kms': 'end_odometer',
+    'odometer end': 'end_odometer', 'finish odometer': 'end_odometer',
+
+    # distance_km
+    'distance_km': 'distance_km', 'distance km': 'distance_km',
+    'distance': 'distance_km', 'total km': 'distance_km',
+    'total kms': 'distance_km', 'total_km': 'distance_km',
+    'km': 'distance_km', 'kms': 'distance_km',
+
+    # vin_or_truck_number
+    'vin_or_truck_number': 'vin_or_truck_number', 'vin': 'vin_or_truck_number',
+    'truck number': 'vin_or_truck_number', 'truck no': 'vin_or_truck_number',
+    'vehicle id': 'vin_or_truck_number', 'unit': 'vin_or_truck_number',
+    'unit number': 'vin_or_truck_number',
+
+    # provincial km columns
+    'ab kms': 'ab_kms', 'ab km': 'ab_kms', 'ab_kms': 'ab_kms',
+    'alberta km': 'ab_kms', 'alberta kms': 'ab_kms',
+    'bc kms': 'bc_kms', 'bc km': 'bc_kms', 'bc_kms': 'bc_kms',
+    'british columbia km': 'bc_kms',
+    'sk kms': 'sk_kms', 'sk km': 'sk_kms', 'sk_kms': 'sk_kms',
+    'saskatchewan km': 'sk_kms',
+    'mb kms': 'mb_kms', 'mb km': 'mb_kms', 'mb_kms': 'mb_kms',
+    'manitoba km': 'mb_kms',
+    'on kms': 'on_kms', 'on km': 'on_kms', 'on_kms': 'on_kms',
+    'ontario km': 'on_kms',
+
+    # provincial fuel columns
+    'ab fuel': 'ab_fuel', 'ab_fuel': 'ab_fuel', 'alberta fuel': 'ab_fuel',
+    'bc fuel': 'bc_fuel', 'bc_fuel': 'bc_fuel', 'british columbia fuel': 'bc_fuel',
+    'sk fuel': 'sk_fuel', 'sk_fuel': 'sk_fuel', 'saskatchewan fuel': 'sk_fuel',
+    'mb fuel': 'mb_fuel', 'mb_fuel': 'mb_fuel', 'manitoba fuel': 'mb_fuel',
+    'on fuel': 'on_fuel', 'on_fuel': 'on_fuel', 'ontario fuel': 'on_fuel',
+}
+
+INVOICE_COLUMN_ALIASES = {
+    # invoice_number
+    'invoice_number': 'invoice_number', 'invoice number': 'invoice_number',
+    'invoice no': 'invoice_number', 'invoice #': 'invoice_number',
+    'receipt number': 'invoice_number', 'receipt no': 'invoice_number',
+    'receipt #': 'invoice_number', 'receipt_number': 'invoice_number',
+    'transaction number': 'invoice_number', 'ref number': 'invoice_number',
+
+    # date
+    'date': 'date', 'transaction date': 'date', 'invoice date': 'date',
+    'purchase date': 'date',
+
+    # time
+    'time': 'time', 'transaction time': 'time', 'purchase time': 'time',
+
+    # vendor_name
+    'vendor_name': 'vendor_name', 'vendor name': 'vendor_name',
+    'vendor': 'vendor_name', 'store': 'vendor_name',
+    'store name': 'vendor_name', 'merchant': 'vendor_name',
+    'retailer': 'vendor_name', 'company': 'vendor_name',
+
+    # city
+    'city': 'city', 'location': 'city', 'town': 'city',
+    'purchase location': 'city', 'purchase city': 'city',
+
+    # province
+    'province': 'province', 'prov': 'province', 'state': 'province',
+    'purchase province': 'province', 'jurisdiction': 'province',
+
+    # fuel_type
+    'fuel_type': 'fuel_type', 'fuel type': 'fuel_type',
+    'type': 'fuel_type', 'product': 'fuel_type', 'fuel': 'fuel_type',
+
+    # fuel_grade
+    'fuel_grade': 'fuel_grade', 'fuel grade': 'fuel_grade',
+    'grade': 'fuel_grade', 'product grade': 'fuel_grade',
+
+    # quantity
+    'quantity': 'quantity', 'litres': 'quantity', 'liters': 'quantity',
+    'volume': 'quantity', 'qty': 'quantity', 'amount (l)': 'quantity',
+    'fuel quantity': 'quantity', 'fuel litres': 'quantity',
+    'litres purchased': 'quantity',
+
+    # cost_per_litre
+    'cost_per_litre': 'cost_per_litre', 'cost per litre': 'cost_per_litre',
+    'price per litre': 'cost_per_litre', 'price/l': 'cost_per_litre',
+    '$/l': 'cost_per_litre', 'unit price': 'cost_per_litre',
+    'price per liter': 'cost_per_litre', 'rate': 'cost_per_litre',
+
+    # cost
+    'cost': 'cost', 'total cost': 'cost', 'total': 'cost',
+    'amount': 'cost', 'fuel cost': 'cost', 'subtotal': 'cost',
+    'net amount': 'cost',
+
+    # total_tax
+    'total_tax': 'total_tax', 'total tax': 'total_tax',
+    'tax': 'total_tax', 'taxes': 'total_tax', 'tax total': 'total_tax',
+
+    # fed_tax
+    'fed_tax': 'fed_tax', 'federal tax': 'fed_tax', 'gst': 'fed_tax',
+    'hst': 'fed_tax', 'federal': 'fed_tax',
+
+    # prov_tax
+    'prov_tax': 'prov_tax', 'provincial tax': 'prov_tax', 'pst': 'prov_tax',
+    'provincial': 'prov_tax',
+
+    # payment_form
+    'payment_form': 'payment_form', 'payment form': 'payment_form',
+    'form of payment': 'payment_form', 'payment': 'payment_form',
+    'payment method': 'payment_form', 'payment type': 'payment_form',
+    'tender': 'payment_form',
+}
+
+
+def standardize_df_columns(data_df, file_cols, filequant='distance'):
+    """
+    Maps raw extracted column names to standard schema column names
+    using a fuzzy alias lookup before falling back to NaN for
+    genuinely missing columns.
+
+    Matching is case-insensitive and whitespace-normalized so that
+    'AB KMs', 'ab kms', 'AB Kms' all map correctly to 'ab_kms'.
+
+    Prints a diagnostic report showing what was matched, renamed,
+    and filled with NaN — useful for debugging new source files.
+    """
+    alias_map = (DISTANCE_COLUMN_ALIASES if filequant == 'distance'
+                 else INVOICE_COLUMN_ALIASES)
+
+    # Normalize incoming column names for matching
+    # Keep original names for the actual rename operation
+    normalized_to_original = {
+        col.lower().strip().replace('_', ' '): col
+        for col in data_df.columns
+    }
+
+    rename_map   = {}   # original_name → standard_name
+    matched      = []
+    renamed      = []
+    filled_nan   = []
+
+    for std_col in file_cols:
+        if std_col == 'source_file':
+            continue  # always added separately in readfile_to_df
+
+        # Check if standard name already exists exactly
+        if std_col in data_df.columns:
+            matched.append(std_col)
+            continue
+
+        # Normalize and look up in alias map
+        found = False
+        for norm_col, orig_col in normalized_to_original.items():
+            mapped = alias_map.get(norm_col)
+            if mapped == std_col and orig_col not in rename_map:
+                rename_map[orig_col] = std_col
+                renamed.append(f"'{orig_col}' → '{std_col}'")
+                found = True
+                break
+
+        if not found:
+            filled_nan.append(std_col)
+
+    # Apply renames
+    data_df = data_df.rename(columns=rename_map)
+
+    # Fill genuinely missing columns with NaN
+    for col in filled_nan:
+        data_df[col] = np.nan
+
+    # Reindex to standard column order, dropping any extra columns
+    data_df = data_df.reindex(columns=file_cols)
+
+    # Diagnostic report
+    print(f"\n   📋 Column standardization report ({filequant}):")
+    if matched:
+        print(f"      ✅ Exact match  ({len(matched)}): {matched}")
+    if renamed:
+        print(f"      🔄 Renamed      ({len(renamed)}): {renamed}")
+    if filled_nan:
+        print(f"      ⚠️  Filled NaN   ({len(filled_nan)}): {filled_nan}")
+
+    return data_df
+
+
 def check_file(filename):
     """Check if file exists and return file type."""
     filename = Path(filename)
@@ -32,7 +246,7 @@ def check_upload_s3(localfile, bucket_name=None, s3_prefix='raw/'):
     """Check if file is in S3 bucket, else upload"""
     if bucket_name is None:
         bucket_name='ifta-storage-prh'
-    s3_client = boto3.client('s3')
+
     file_name = Path(localfile).name
     s3_key = f"{s3_prefix}{file_name}"
 
@@ -183,8 +397,7 @@ def get_df_from_textract_tables(textract_tables, column_names=None,
 
     # If column names are not listed in every table, use the special case
     if not column_names_everytable:
-        return get_df_texttables_special(textract_tables), pd.DataFrame()
-
+        return get_df_texttables_special(textract_tables)
     if column_names is None:
         # Use column names from the first table
         column_names = [
@@ -728,34 +941,31 @@ def clean_dataframe(df_uncleaned, conf_df_uncleaned=None):
 
 def export_dataframe_to_s3_csv(df, target_prefix, base_filename, bucket_name):
     """
-    Transforms an extracted DataFrame into a clean, standardized, comma-separated 
-    string buffer and uploads it directly to an Athena-indexed S3 folder prefix.
+    Exports using pipe delimiter to avoid Athena SerDe issues with
+    quoted strings containing commas (e.g. 'Nisku, AB').
+    Also explicitly drops pandas index to prevent column count mismatch.
     """
     s3_client = boto3.client('s3')
     csv_buffer = io.StringIO()
-    
-    # Enforce standard formatting options to guarantee Athena parsers map rows predictably
-    df.to_csv(csv_buffer, index=False, header=True, lineterminator='\n')
-    
+
+    df.to_csv(
+        csv_buffer,
+        index=False,          # never export pandas index
+        header=True,
+        sep='|',        # pipe delimiter — no conflict with city/province commas
+        lineterminator='\n'
+    )
+
     target_key = (
-        f"{target_prefix}{Path(base_filename).stem.replace(' ', '_')}_extracted.csv")
-    
+        f"{target_prefix}{Path(base_filename).stem.replace(' ', '_')}_extracted.csv"
+    )
+
     s3_client.put_object(
         Bucket=bucket_name,
         Key=target_key,
         Body=csv_buffer.getvalue()
     )
     print(f"Staged extraction table at: s3://{bucket_name}/{target_key}")
-
-
-def standardize_df_columns(data_df, file_cols):
-    """Standardize columns of the dataframe."""
-    for col in file_cols:
-        if col not in data_df.columns:
-            data_df[col] = np.nan
-
-    data_df = data_df.reindex(columns=file_cols)
-    return data_df
 
 
 def readfile_to_df(localfile, filequant='distance', bucket_name=None):
@@ -816,8 +1026,9 @@ def readfile_to_df(localfile, filequant='distance', bucket_name=None):
 
     # Cleaning
     df_cleaned, conf_cleaned = clean_dataframe(datatable_df, conf_scores_df)
-    df_standardized = standardize_df_columns(df_cleaned, std_cols)
-    conf_standardized = standardize_df_columns(conf_cleaned, std_cols)
+    df_standardized = standardize_df_columns(df_cleaned, std_cols, filequant)
+    conf_standardized = standardize_df_columns(conf_cleaned, std_cols,
+                                               filequant)
 
     return (df_standardized, conf_standardized)
     
@@ -836,6 +1047,7 @@ def run_cloud_extraction_pipeline(
 
     dftables_list = []
     conf_scores_list = []
+    count = 0
     for local_file, doctype in zip(file_list, file_quant_list):
         print(f"\n-- Initiating cloud extraction sequence for: {local_file} --")
         # Upload raw files
@@ -844,7 +1056,7 @@ def run_cloud_extraction_pipeline(
         # Extract dataframe and confidence scores from local files
         df_table, conf_scores = readfile_to_df(
             local_file, doctype, bucket_name=bucket_name)
-
+        df_table.to_csv(f"Temp_{doctype}_{count}.csv")
         if doctype == 'invoice':
             dynamic_csv_folder = f"{bucket_csvfolder}/invoices/"
             dynamic_conf_folder = f"{bucket_conffolder}/invoices/"
@@ -857,6 +1069,7 @@ def run_cloud_extraction_pipeline(
             conf_scores, dynamic_conf_folder, local_file, bucket_name)
         dftables_list.append(df_table)
         conf_scores_list.append(conf_scores)
+        count += 1
 
     return dftables_list, conf_scores_list
 

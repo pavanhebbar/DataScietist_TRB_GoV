@@ -58,7 +58,7 @@ def deploy_athena_schema(bucket_name='prh-ifta-audit-lake', region='ca-west-1'):
         payment_form STRING,
         source_file STRING
     )
-    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+    ROW FORMAT DELIMITED FIELDS TERMINATED BY '|'
     LOCATION 's3://{bucket_name}/ocr-extracted-csv/invoices/'
     TBLPROPERTIES ('skip.header.line.count'='1');
     """
@@ -87,7 +87,7 @@ def deploy_athena_schema(bucket_name='prh-ifta-audit-lake', region='ca-west-1'):
         on_fuel DOUBLE,
         source_file STRING
     )
-    ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+    ROW FORMAT DELIMITED FIELDS TERMINATED BY '|'
     LOCATION 's3://{bucket_name}/ocr-extracted-csv/distance_logs/'
     TBLPROPERTIES ('skip.header.line.count'='1');
     """
@@ -97,69 +97,97 @@ def deploy_athena_schema(bucket_name='prh-ifta-audit-lake', region='ca-west-1'):
     CREATE OR REPLACE VIEW default.ifta_audit_merged_view AS
     WITH parsed_invoices AS (
         SELECT *,
-            CAST(date AS DATE) AS inv_date
+            -- TRY_CAST handles ISO format (2022-01-15)
+            -- date_parse fallbacks handle slash formats from OCR output
+            COALESCE(
+                TRY_CAST(date AS DATE),
+                TRY(date_parse(TRIM(date), '%Y-%m-%d')),
+                TRY(date_parse(TRIM(date), '%m/%d/%Y')),
+                TRY(date_parse(TRIM(date), '%d/%m/%Y')),
+                TRY(date_parse(TRIM(date), '%d/%m/%y')),
+                TRY(date_parse(TRIM(date), '%m/%d/%y')),
+                TRY(date_parse(TRIM(date), '%B %d, %Y')),
+                TRY(date_parse(TRIM(date), '%b %d, %Y'))
+            ) AS inv_date
         FROM default.ifta_extracted_invoices
-        WHERE date IS NOT NULL AND date != 'nan'
+        WHERE date IS NOT NULL
+          AND TRIM(date) != ''
+          AND LOWER(TRIM(date)) != 'nan'
     ),
     parsed_logs AS (
         SELECT 
             trip_date, trip_origin, trip_destination, trip_start_time,
-            trip_end_time, start_odometer, end_odometer, vin_or_truck_number,
+            trip_end_time, start_odometer, end_odometer,
             ab_kms, bc_kms, sk_kms, mb_kms, on_kms,
             ab_fuel, bc_fuel, sk_fuel, mb_fuel, on_fuel, source_file,
-            CAST(trip_date AS DATE) AS log_date,
-            COALESCE(distance_km, (end_odometer - start_odometer)) AS distance_km
+            COALESCE(
+                TRY_CAST(trip_date AS DATE),
+                TRY(date_parse(TRIM(trip_date), '%Y-%m-%d')),
+                TRY(date_parse(TRIM(trip_date), '%m/%d/%Y')),
+                TRY(date_parse(TRIM(trip_date), '%d/%m/%Y')),
+                TRY(date_parse(TRIM(trip_date), '%d/%m/%y')),
+                TRY(date_parse(TRIM(trip_date), '%m/%d/%y')),
+                TRY(date_parse(TRIM(trip_date), '%B %d, %Y')),
+                TRY(date_parse(TRIM(trip_date), '%b %d, %Y'))
+            ) AS log_date,
+            COALESCE(
+                TRY_CAST(distance_km AS DOUBLE),
+                TRY_CAST(
+                    GREATEST(0, COALESCE(end_odometer, 0) - COALESCE(start_odometer, 0))
+                    AS DOUBLE
+                )
+            ) AS distance_km,
+            CASE
+                WHEN lower(source_file) LIKE '%log_1%' 
+                  OR lower(source_file) LIKE '%log 1%'
+                  OR lower(source_file) LIKE '%distance log 1%' THEN 'TRUCK_1'
+                WHEN lower(source_file) LIKE '%log_2%'
+                  OR lower(source_file) LIKE '%log 2%'
+                  OR lower(source_file) LIKE '%distance log 2%' THEN 'TRUCK_2'
+                ELSE 'UNKNOWN'
+            END AS vin_or_truck_number
         FROM default.ifta_extracted_distance_logs
-        WHERE trip_date IS NOT NULL AND trip_date != 'nan'
+        WHERE trip_date IS NOT NULL
+          AND TRIM(trip_date) != ''
+          AND LOWER(TRIM(trip_date)) != 'nan'
+    ),
+    -- Filter out rows where date parsing failed entirely
+    valid_logs AS (
+        SELECT * FROM parsed_logs
+        WHERE log_date IS NOT NULL
+    ),
+    valid_invoices AS (
+        SELECT * FROM parsed_invoices
+        WHERE inv_date IS NOT NULL
     ),
     fuzzy_matched_data AS (
-        SELECT 
-            -- Distance Log Columns (The Primary Stream)
-            d.trip_date,
-            d.trip_origin,
-            d.trip_destination,
-            d.trip_start_time,
-            d.trip_end_time,
-            d.start_odometer,
-            d.end_odometer,
-            d.distance_km,
+        SELECT
+            d.log_date,
+            d.trip_date, d.trip_origin, d.trip_destination,
+            d.trip_start_time, d.trip_end_time,
+            d.start_odometer, d.end_odometer, d.distance_km,
             d.vin_or_truck_number,
             d.ab_kms, d.bc_kms, d.sk_kms, d.mb_kms, d.on_kms,
             d.ab_fuel, d.bc_fuel, d.sk_fuel, d.mb_fuel, d.on_fuel,
             d.source_file AS log_source_file,
-
-            -- Appended Invoice Columns (Trailing Block)
-            i.invoice_number,
-            i.date AS invoice_date,
-            i.time AS invoice_time,
-            i.vendor_name,
-            i.city AS purchase_city,
+            i.invoice_number, i.date AS invoice_date, i.time AS invoice_time,
+            i.vendor_name, i.city AS purchase_city,
             i.province AS purchase_province,
-            i.fuel_type,
-            i.fuel_grade,
+            i.fuel_type, i.fuel_grade,
             i.quantity AS fuel_litres_purchased,
-            i.cost_per_litre,
-            i.cost AS fuel_cost,
-            i.total_tax,
-            i.fed_tax,
-            i.prov_tax,
-            i.payment_form,
+            i.cost_per_litre, i.cost AS fuel_cost,
+            i.total_tax, i.fed_tax, i.prov_tax, i.payment_form,
             i.source_file AS invoice_source_file,
-
-            -- Matching Metadata
             abs(date_diff('day', i.inv_date, d.log_date)) AS days_difference,
-
-            -- Rank matches per distance log entry
             ROW_NUMBER() OVER(
-                PARTITION BY d.vin_or_truck_number, d.trip_date, d.trip_start_time 
+                PARTITION BY d.vin_or_truck_number, d.trip_date, d.trip_start_time
                 ORDER BY abs(date_diff('day', i.inv_date, d.log_date)) ASC
             ) AS proximity_rank
-
-        FROM parsed_logs d
-        LEFT JOIN parsed_invoices i
-            ON abs(date_diff('day', i.inv_date, d.log_date)) <= 2
+        FROM valid_logs d
+        LEFT JOIN valid_invoices i
+            ON abs(date_diff('day', i.inv_date, d.log_date)) <= 3
     )
-    SELECT * FROM fuzzy_matched_data 
+    SELECT * FROM fuzzy_matched_data
     WHERE proximity_rank = 1;
     """
     # Drop old tables

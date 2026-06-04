@@ -11,7 +11,7 @@ def build_analytical_features_table(bucket_name='prh-ifta-audit-lake',
     pre-computed Parquet table in Athena/S3, utilizing TRY_CAST for data safety.
     """
     athena_client = boto3.client('athena', region_name=region)
-    s3_resource = boto3.resource('s3')
+    s3_resource = boto3.resource('s3', region_name=region)
     
     table_name = "default.ifta_audit_features_table"
     target_s3_location = f"s3://{bucket_name}/engineered-features/"
@@ -40,9 +40,14 @@ def build_analytical_features_table(bucket_name='prh-ifta-audit-lake',
     WITH base_metrics AS (
         SELECT
             trip_date,
-            TRY_CAST(TRIM(trip_date) AS DATE) AS t_date,
+            log_date AS t_date,
             trip_origin, trip_destination, trip_start_time, trip_end_time,
-            start_odometer, end_odometer, distance_km, vin_or_truck_number,
+            start_odometer, end_odometer,
+            COALESCE(
+                distance_km,
+                GREATEST(0, COALESCE(end_odometer, 0) - COALESCE(start_odometer, 0))
+            ) AS total_km,
+            vin_or_truck_number,
             ab_kms, bc_kms, sk_kms, mb_kms, on_kms,
             ab_fuel, bc_fuel, sk_fuel, mb_fuel, on_fuel, log_source_file,
             invoice_number, invoice_date, invoice_time, vendor_name,
@@ -51,7 +56,7 @@ def build_analytical_features_table(bucket_name='prh-ifta-audit-lake',
             total_tax, fed_tax, prov_tax, payment_form, invoice_source_file,
             days_difference,
             
-            (COALESCE(ab_kms, 0) + COALESCE(bc_kms, 0) + COALESCE(sk_kms, 0) + COALESCE(mb_kms, 0) + COALESCE(on_kms, 0)) AS total_km,
+            (COALESCE(ab_kms, 0) + COALESCE(bc_kms, 0) + COALESCE(sk_kms, 0) + COALESCE(mb_kms, 0) + COALESCE(on_kms, 0)) AS provincial_sum_km,
             
             COALESCE(
                 fuel_litres_purchased, 
@@ -87,37 +92,72 @@ def build_analytical_features_table(bucket_name='prh-ifta-audit-lake',
             COUNT(CASE WHEN total_fuel_litres > 0 THEN 1 END) OVER(
                 PARTITION BY vin_or_truck_number 
                 ORDER BY t_date 
-                ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
-            ) AS fuel_segment_block
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS fuel_segment_block
         FROM filtered_metrics
     ),
-    calculated_efficiency AS (
+   calculated_efficiency AS (
         SELECT 
             *,
-            -- Compute distance accumulated within the current fueling segment block
+            DATE_DIFF('day', t_date, next_fuel_event_date) AS days_until_next_fuel,
+            total_fuel_litres / NULLIF(total_km, 0)    AS fuel_litres_per_km,
+            fuel_cost / NULLIF(total_km, 0)            AS fuel_cost_per_km,
+
+            CASE 
+                WHEN total_km > 0 
+                     AND (rolling_3d_fuel_window IS NULL OR rolling_3d_fuel_window = 0) 
+                THEN 1 ELSE 0
+            END AS is_unvouched_trip,
+
+            CASE 
+                WHEN DATE_DIFF('day', t_date, next_fuel_event_date) > 3 
+                THEN 1 ELSE 0
+            END AS missing_invoice_gap_flag,
+
+            -- km_per_tank: total distance in the current fuelling cycle
             SUM(total_km) OVER(
                 PARTITION BY vin_or_truck_number, fuel_segment_block
-            ) AS total_km_accumulated_before_next_fuel,
-            
-            -- Days until the next fuel receipt appears
-            DATE_DIFF('day', t_date, next_fuel_event_date) AS days_until_next_fuel,
-            
-            -- Downstream ratios
-            total_fuel_litres / NULLIF(total_km, 0) AS fuel_litres_per_km,
-            fuel_cost / NULLIF(total_km, 0) AS fuel_cost_per_km,
-            
-            -- Unvouched trip if truck moved but 0 fuel exists across the entire 6-day window
-            CASE 
-                WHEN total_km > 0 AND (rolling_3d_fuel_window IS NULL OR rolling_3d_fuel_window = 0) THEN 1 
-                ELSE 0 
-            END AS is_unvouched_trip,
-            
-            -- High-probability missing invoice indicator (>7 days between fueling logs)
-            CASE 
-                WHEN DATE_DIFF('day', t_date, next_fuel_event_date) > 7 THEN 1 
-                ELSE 0 
-            END AS missing_invoice_gap_flag
-            
+            ) AS km_per_tank,
+
+            -- avg_fuel_per_tank: average fuel across the fuelling cycle
+            -- approximated as total fuel in cycle ÷ number of fuel events
+            SUM(total_fuel_litres) OVER(
+                PARTITION BY vin_or_truck_number, fuel_segment_block
+            ) / NULLIF(
+                COUNT(CASE WHEN total_fuel_litres > 0 THEN 1 END) OVER(
+                    PARTITION BY vin_or_truck_number, fuel_segment_block
+                ), 0
+            ) AS avg_fuel_per_tank,
+
+            -- cycle_fuel_per_km: fuel efficiency over the full tank cycle
+            SUM(total_fuel_litres) OVER(
+                PARTITION BY vin_or_truck_number, fuel_segment_block
+            ) / NULLIF(
+                SUM(total_km) OVER(
+                    PARTITION BY vin_or_truck_number, fuel_segment_block
+                ), 0
+            ) AS cycle_fuel_per_km,
+
+            -- km_reconciliation_gap: unaccounted distance
+            GREATEST(0, total_km - provincial_sum_km) AS km_reconciliation_gap,
+
+            -- odometer_gap: undocumented km between successive trips
+            GREATEST(0,
+                start_odometer - LAG(end_odometer) OVER(
+                    PARTITION BY vin_or_truck_number ORDER BY t_date
+                )
+            ) AS odometer_gap,
+
+            -- fuel_source_reliability: 4-tier confidence score
+            CASE
+                WHEN invoice_number IS NOT NULL                         THEN 3
+                WHEN (COALESCE(ab_fuel,0) + COALESCE(bc_fuel,0) +
+                      COALESCE(sk_fuel,0) + COALESCE(mb_fuel,0) +
+                      COALESCE(on_fuel,0)) > 0                          THEN 2
+                WHEN rolling_3d_fuel_window > 0                         THEN 1
+                ELSE 0
+            END AS fuel_source_reliability
+
         FROM temporal_fuel_windows
     ),
     jurisdictional_proportions AS (
@@ -171,9 +211,10 @@ def build_analytical_features_table(bucket_name='prh-ifta-audit-lake',
         t.weekly_avg_fuel_litres,
         t.monthly_avg_fuel_litres,
         
-        p.distance_km / NULLIF(t.daily_avg_distance_km, 0) AS ratio_trip_to_daily_km,
-        p.distance_km / NULLIF(t.weekly_avg_distance_km, 0) AS ratio_trip_to_weekly_km,
-        p.distance_km / NULLIF(t.monthly_avg_distance_km, 0) AS ratio_trip_to_monthly_km
+        p.total_km / NULLIF(t.weekly_avg_distance_km,  0) AS dist_to_weekly_ratio,
+        p.total_km / NULLIF(t.monthly_avg_distance_km, 0) AS dist_to_monthly_ratio,
+        p.total_fuel_litres / NULLIF(t.weekly_avg_fuel_litres,  0) AS fuel_to_weekly_ratio,
+        p.total_fuel_litres / NULLIF(t.monthly_avg_fuel_litres, 0) AS fuel_to_monthly_ratio
     FROM jurisdictional_proportions p
     LEFT JOIN temporal_moving_windows t ON p.t_date = t.t_date;
     """
