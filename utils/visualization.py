@@ -69,7 +69,7 @@ def plot_total_km_vs_fuel(df, save_path='eda_1_total_km_vs_fuel.png'):
     plt.title('Fleet Physical Baseline: Total Fuel vs. Distance Logged', fontsize=14, pad=15, fontweight='bold')
     plt.xlabel('Total Distance (km)')
     plt.ylabel('Total Fuel (L)')
-    plt.legend(title='Is Unvouched Trip?', frameon=True)
+    plt.legend(title='Fuel Source', frameon=True)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.show()
@@ -531,7 +531,7 @@ def plot_trip_vs_window_efficiency(df,
     std_wfpm = df_plot['cycle_fuel_per_km'].std()
     df_plot['z_score_wfpm'] = ((df_plot['cycle_fuel_per_km'] - mean_wfpm) /
                                std_wfpm)
-    wfpm_drift = df[(df_plot['z_score_wfpm'] > 3) |
+    wfpm_drift = df_plot[(df_plot['z_score_wfpm'] > 3) |
                     (df_plot['cycle_fuel_per_km'] < 0.05)]
     for enum_idx, (_, row) in enumerate(wfpm_drift.iterrows()):
         plt.annotate(
@@ -546,7 +546,7 @@ def plot_trip_vs_window_efficiency(df,
                       fc="#fce4d6", ec="#c0392b", lw=1.5)
         )
 
-    plt.title('Fuelling cycle efficiency y source',
+    plt.title('Fuelling cycle efficiency by source',
               fontsize=14, fontweight='bold', pad=15)
     plt.xlabel('±3 Day window distance before fuel(km)')
     plt.ylabel('±3 Day window nearest Fuel quantity (L)')
