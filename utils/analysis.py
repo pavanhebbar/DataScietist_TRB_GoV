@@ -15,12 +15,12 @@ def extract_deterministic_outliers(df):
     calculated dynamically from the population statistics.
     """
     print("🧹 Stage 1: Dynamically calculating population Z-scores for deterministic filtering...")
-    
+
     # 1. Total Distance and Total Fuel,  absolute bounds (> 3 Sigma)
     mean_km, std_km = df['total_km'].mean(), df['total_km'].std()
     mean_fuel, std_fuel = (
         df['total_fuel_litres'].mean(), df['total_fuel_litres'].std())
-    
+
     rule_dist_z = df['total_km'] > (mean_km + 3 * std_km)
     rule_fuel_z = df['total_fuel_litres'] > (mean_fuel + 3 * std_fuel)
 
@@ -29,13 +29,13 @@ def extract_deterministic_outliers(df):
         df['avg_fuel_per_tank'].mean(), df['avg_fuel_per_tank'].std())
     mean_dist_tank, std_dist_tank = (
         df['km_per_tank'].mean(), df['km_per_tank'].std())
-    
+
     rule_avgfuel_z = (
         (df['avg_fuel_per_tank'] > (mean_avg_fuel + 3*std_avg_fuel)) |
         (df['avg_fuel_per_tank'] < 100))
     rule_avgdist_z = df['km_per_tank'] > (mean_dist_tank + 3*std_dist_tank)
 
-    
+
     # 2. Fuel Intensity bounds (> 3 Sigma) and < 0.05 L/km
     rule_intensity_z1 = (
         df['fuel_litres_per_km'] > (df['fuel_litres_per_km'].mean() +
@@ -46,7 +46,7 @@ def extract_deterministic_outliers(df):
     rule_intensity_z3  = (df['cycle_fuel_per_km'] < 0.05)
     rule_intensity_z = (rule_intensity_z1 | rule_intensity_z2 |
                         rule_intensity_z3)
-    
+
     # Fuel cost
     rule_cost_high = (df['fuel_cost_per_km'] > 1)
 
@@ -54,22 +54,24 @@ def extract_deterministic_outliers(df):
     rule_dist_mismatch = (df['km_reconciliation_gap'] >= 10)
     rule_missing_fuel = (df['fuel_source_reliability'] == 0)
     rule_odometer_gap = (df['odometer_gap'] == 1)
-    
+
     # 3. IFTA Boundary Compliance Violation (Fuel in Alberta, but 0 Distance)
     rule_ifta_breach = (df['ab_fuel_prop'] == 1.0) & (df['ab_dist_prop'] == 0.0)
-    
+
     # 4. Weekly and Monthly Ratio Deviations (> 3 Sigma)
     mean_rw_dist, std_rw_dist = df['dist_to_weekly_ratio'].mean(), df['dist_to_weekly_ratio'].std()
     mean_rw_fuel, std_rw_fuel = df['fuel_to_weekly_ratio'].mean(), df['fuel_to_weekly_ratio'].std()
     mean_rm_dist, std_rm_dist = df['dist_to_monthly_ratio'].mean(), df['dist_to_monthly_ratio'].std()
     mean_rm_fuel, std_rm_fuel = df['fuel_to_monthly_ratio'].mean(), df['fuel_to_monthly_ratio'].std()
-    
-    rule_weekly_ratio_outlier = (df['dist_to_weekly_ratio'] > (mean_rw_dist + 3 * std_rw_dist)) | \
-                                (df['fuel_to_weekly_ratio'] > (mean_rw_fuel + 3 * std_rw_fuel))
-                                
-    rule_monthly_ratio_outlier = (df['dist_to_monthly_ratio'] > (mean_rm_dist + 3 * std_rm_dist)) | \
-                                 (df['fuel_to_monthly_ratio'] > (mean_rm_fuel + 3 * std_rm_fuel))
-                                 
+
+    rule_weekly_ratio_outlier = ((
+        df['dist_to_weekly_ratio'] > (mean_rw_dist + 3 * std_rw_dist)) |
+        (df['fuel_to_weekly_ratio'] > (mean_rw_fuel + 3 * std_rw_fuel)))
+
+    rule_monthly_ratio_outlier = (
+        (df['dist_to_monthly_ratio'] > (mean_rm_dist + 3 * std_rm_dist)) |
+        (df['fuel_to_monthly_ratio'] > (mean_rm_fuel + 3 * std_rm_fuel)))
+
     # 5. Moving Average Macro-Drift (> 3 Sigma)
     mean_w_avg_km, std_w_avg_km = (
         df['weekly_avg_distance_km'].median(),
@@ -96,7 +98,7 @@ def extract_deterministic_outliers(df):
                                                  3 * std_w_avg_L))
             )
             )
-)
+    )
 
     rule_macro_drift_month = (
         (df['monthly_avg_distance_km'] > (mean_m_avg_km + 3 * std_m_avg_km)) |
@@ -188,10 +190,10 @@ def extract_deterministic_outliers(df):
 
     df_breaches['Multi-Feature Interaction Spike'] = 'N/A'
     df_breaches['Route Context'] = df_breaches.apply(lambda r: f"{r.get('trip_origin', 'UNK')} ➔ {r.get('trip_destination', 'UNK')}", axis=1)
-    
+
     print(f"   👉 Isolated {len(df_breaches)} records violating the > 3σ or IFTA constraints.")
     print(f"   👉 Kept {len(df_clean_pool)} records for unsupervised Isolation Forest modeling.")
-    
+
     _print_driver_summary(df_breaches)
     return df_clean_pool, df_breaches
 
@@ -232,9 +234,9 @@ def _print_driver_summary(df_breaches):
     rows.sort(key=lambda x: x[3], reverse=True)
 
     w = 30   # driver name column width
-    print(f"\n   {'📋 Deterministic Audit Ledger — Driver Contribution Summary'}")
+    print(f"\n   {'Deterministic Audit Ledger — Driver Contribution Summary'}")
     print(f"   {'═' * 62}")
-    print(f"   {'Driver Category':<{w}}  {'Primary':>8}  {'Secondary':>10}  {'Total':>7}")
+    print(f"{'Driver Category':<{w}}  {'Primary':>8}  {'Secondary':>10}  {'Total':>7}")
     print(f"   {'─' * 62}")
     for driver, p, s, total in rows:
         print(f"   {driver:<{w}}  {p:>8}  {s:>10}  {total:>7}")
@@ -284,7 +286,7 @@ def extract_robust_anomaly_reasons(iso_forest, df_statistical, X_scaled, feature
         
     return pd.DataFrame(anomaly_diagnostics, index=df_statistical.index)
 
-def calculate_global_importance(df_statistical, features):
+def calculate_global_importance(df_statistical):
     """
     Computes global feature importance natively by taking the mean absolute 
     ablation impact across all flagged statistical anomalies.
@@ -296,11 +298,10 @@ def calculate_global_importance(df_statistical, features):
         print("   ⚠️ No statistical anomalies to evaluate for global importance.")
         return pd.DataFrame()
 
-    # We can extract this directly if you run a quick loop or track the raw deltas,
-    # but for a fast, clean presentation slide, we can look at the distribution 
-    # of the Primary and Secondary drivers flagged in the ledger:
-    driver_counts = pd.concat([df_statistical['Primary Driver'], df_statistical['Secondary Driver']]).value_counts()
-    driver_df = pd.DataFrame({'Feature': driver_counts.index, 'Selection Frequency': driver_counts.values})
+    driver_counts = pd.concat([df_statistical['Primary Driver'],
+                               df_statistical['Secondary Driver']]).value_counts()
+    driver_df = pd.DataFrame({'Feature': driver_counts.index,
+                              'Selection Frequency': driver_counts.values})
     driver_df = driver_df[driver_df['Feature'] != 'None'].sort_values(by='Selection Frequency', ascending=False)
     
     plt.figure(figsize=(10, 5))

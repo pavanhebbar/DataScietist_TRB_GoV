@@ -2,7 +2,6 @@
 
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 import pandas as pd
 
 
@@ -32,23 +31,28 @@ def plot_total_km_vs_fuel(df, save_path='eda_1_total_km_vs_fuel.png'):
         hue='fuel_source', palette=palette,
         s=150, edgecolor='black', alpha=0.85
     )
-    
+
     mean_x, std_x = df['total_km'].mean(), df['total_km'].std()
     mean_y, std_y = df['total_fuel_litres'].mean(), df['total_fuel_litres'].std()
-    
+
     for i in [1, 2, 3]:
         color = '#e67e22' if i == 1 else ('#d35400' if i == 2 else '#c0392b')
         ls = '--' if i == 1 else (':' if i == 2 else '-.')
         plt.axvline(mean_x + i * std_x, color=color, linestyle=ls, alpha=0.3)
-        if mean_x - i * std_x >= 0: plt.axvline(mean_x - i * std_x, color=color, linestyle=ls, alpha=0.3)
+        if mean_x - i * std_x >= 0:
+            plt.axvline(mean_x - i * std_x, color=color, linestyle=ls,
+                        alpha=0.3)
         plt.axhline(mean_y + i * std_y, color=color, linestyle=ls, alpha=0.3)
-        if mean_y - i * std_y >= 0: plt.axhline(mean_y - i * std_y, color=color, linestyle=ls, alpha=0.3)
-            
+        if mean_y - i * std_y >= 0:
+            plt.axhline(mean_y - i * std_y, color=color, linestyle=ls,
+                        alpha=0.3)
+
     outlier = df[df['total_km'] > 3000]
     if not outlier.empty:
         for idx, row in outlier.iterrows():
             plt.annotate(
-                f"High Risk Outlier\nRoute: {row['trip_origin']} ➔ {row['trip_destination']}\nDistance: {row['total_km']:.0f} km",
+                f"High Risk Outlier\nRoute: {row['trip_origin']} ➔ "
+                f"{row['trip_destination']}\nDistance: {row['total_km']:.0f}km",
                 xy=(row['total_km'], row['total_fuel_litres']),
                 xytext=(row['total_km'] - 850, row['total_fuel_litres'] + 150),
                 arrowprops=dict(facecolor='black', shrink=0.08, width=1, headwidth=6),
@@ -57,16 +61,19 @@ def plot_total_km_vs_fuel(df, save_path='eda_1_total_km_vs_fuel.png'):
             )
     missing_fuel = df[df['fuel_source'] == 'missing']
     if not missing_fuel.empty:
-        for idx, row in missing_fuel.iterrows():
+        for idx, (_, row) in enumerate(missing_fuel.iterrows()):
             plt.annotate(
-                f"Missing fuel\nRoute: {row['trip_origin']} ➔ {row['trip_destination']}\nDistance: {row['total_km']:.0f} km",
+                f"Missing fuel\nRoute: {row['trip_origin']} ➔ "
+                f"{row['trip_destination']}\nDistance: {row['total_km']:.0f}km",
                 xy=(row['total_km'], row['total_fuel_litres']),
-                xytext=(row['total_km'] - 850, row['total_fuel_litres'] + 150),
+                xytext=(row['total_km'] - 850 + idx * 600,
+                        row['total_fuel_litres'] + 150),
                 arrowprops=dict(facecolor='black', shrink=0.08, width=1, headwidth=6),
                 fontsize=11, fontweight='bold',
                 bbox=dict(boxstyle="round,pad=0.4", fc="#fce4d6", ec="#c0392b", lw=1.5))
-            
-    plt.title('Fleet Physical Baseline: Total Fuel vs. Distance Logged', fontsize=14, pad=15, fontweight='bold')
+
+    plt.title('Fleet Physical Baseline: Total Fuel vs. Distance Logged',
+              fontsize=14, pad=15, fontweight='bold')
     plt.xlabel('Total Distance (km)')
     plt.ylabel('Total Fuel (L)')
     plt.legend(title='Is Unvouched Trip?', frameon=True)
@@ -208,7 +215,7 @@ def plot_jurisdiction_proportions(
     """
     provinces = ['ab', 'bc', 'mb', 'on']
     long_data = []
-    
+
     for prov in provinces:
         for idx, row in df.iterrows():
             if pd.notna(row[f'{prov}_dist_prop']) or pd.notna(row[f'{prov}_fuel_prop']):
@@ -220,39 +227,49 @@ def plot_jurisdiction_proportions(
                     'trip_origin': row.get('trip_origin', 'Unknown'),
                     'trip_destination': row.get('trip_destination', 'Unknown')
                 })
-                
+
     df_long = pd.DataFrame(long_data)
-    
+
     if not df_long.empty:
         plt.figure(figsize=(12, 8))
         sns.scatterplot(
             data=df_long, x='Distance Proportion', y='Fuel Proportion', hue='Variance',
             palette='coolwarm', style='Province', s=200, edgecolor='black', alpha=0.9
         )
-        plt.plot([0, 1], [0, 1], color='gray', linestyle='--', alpha=0.7, label='Perfect Parity Line')
-        
-        ab_anomalies = df_long[(df_long['Province'] == 'AB') & (df_long['Distance Proportion'] == 0.0) & (df_long['Fuel Proportion'] == 1.0)]
+        plt.plot([0, 1], [0, 1], color='gray', linestyle='--', alpha=0.7,
+                 label='Perfect Parity Line')
+
+        ab_anomalies = df_long[(df_long['Province'] == 'AB') &
+                               (df_long['Distance Proportion'] == 0.0) &
+                               (df_long['Fuel Proportion'] == 1.0)]
         if not ab_anomalies.empty:
             for idx, row in ab_anomalies.iterrows():
                 plt.annotate(
-                    f"IFTA Breach: Fuel entry with Zero Distance\nRoute: {row['trip_origin']} ➔ {row['trip_destination']}",
+                    f"IFTA Breach: Fuel entry with Zero Distance\nRoute: "
+                    f"{row['trip_origin']} ➔ {row['trip_destination']}",
                     xy=(0.0, 1.0), xytext=(0.15, 0.92),
                     arrowprops=dict(facecolor='black', shrink=0.08, width=1, headwidth=6),
                     fontsize=10, fontweight='bold',
                     bbox=dict(boxstyle="round,pad=0.3", fc="#fce4d6", ec="#c0392b", lw=1.5)
                 )
 
-        mean_x, std_x = df_long['Distance Proportion'].mean(), df_long['Distance Proportion'].std()
-        mean_y, std_y = df_long['Fuel Proportion'].mean(), df_long['Fuel Proportion'].std()
+        mean_x, std_x = (df_long['Distance Proportion'].mean(),
+                         df_long['Distance Proportion'].std())
+        mean_y, std_y = (df_long['Fuel Proportion'].mean(),
+                         df_long['Fuel Proportion'].std())
         for i in [1, 2, 3]:
             color = '#e67e22' if i == 1 else '#c0392b'
-            plt.axvline(mean_x + i * std_x, color=color, linestyle=':', alpha=0.3)
-            plt.axhline(mean_y + i * std_y, color=color, linestyle=':', alpha=0.3)
-        
-        plt.title('Cross-Jurisdictional Alignment: Distance vs. Fuel Share', fontsize=14, pad=15, fontweight='bold')
+            plt.axvline(mean_x + i * std_x, color=color, linestyle=':',
+                        alpha=0.3)
+            plt.axhline(mean_y + i * std_y, color=color, linestyle=':',
+                        alpha=0.3)
+
+        plt.title('Cross-Jurisdictional Alignment: Distance vs. Fuel Share',
+                  fontsize=14, pad=15, fontweight='bold')
         plt.xlabel('Proportion of Total Distance per Trip')
         plt.ylabel('Proportion of Total Fuel per Trip')
-        plt.legend(title='Jurisdiction Audit Metrics', frameon=True, bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.legend(title='Jurisdiction Audit Metrics', frameon=True,
+                   bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
         plt.savefig(save_path, dpi=300)
         plt.show()
@@ -266,40 +283,60 @@ def plot_baselines_deviation(
     Annotates trips extending beyond +3 sigma volatility thresholds on either axis.
     """
     df_copy = df.copy()
-    df_copy['dist_to_weekly_ratio'] = df_copy.apply(lambda r: r['total_km'] / r['weekly_avg_distance_km'] if r['weekly_avg_distance_km'] > 0 else 1, axis=1)
-    df_copy['fuel_to_weekly_ratio'] = df_copy.apply(lambda r: r['total_fuel_litres'] / r['weekly_avg_fuel_litres'] if r['weekly_avg_fuel_litres'] > 0 else 1, axis=1)
-    df_copy['dist_to_monthly_ratio'] = df_copy.apply(lambda r: r['total_km'] / r['monthly_avg_distance_km'] if r['monthly_avg_distance_km'] > 0 else 1, axis=1)
-    df_copy['fuel_to_monthly_ratio'] = df_copy.apply(lambda r: r['total_fuel_litres'] / r['monthly_avg_fuel_litres'] if r['monthly_avg_fuel_litres'] > 0 else 1, axis=1)
+    df_copy['dist_to_weekly_ratio'] = df_copy.apply(
+        lambda r: r['total_km'] / r['weekly_avg_distance_km']
+        if r['weekly_avg_distance_km'] > 0 else 1, axis=1)
+    df_copy['fuel_to_weekly_ratio'] = df_copy.apply(
+        lambda r: r['total_fuel_litres'] / r['weekly_avg_fuel_litres']
+        if r['weekly_avg_fuel_litres'] > 0 else 1, axis=1)
+    df_copy['dist_to_monthly_ratio'] = df_copy.apply(
+        lambda r: r['total_km'] / r['monthly_avg_distance_km']
+        if r['monthly_avg_distance_km'] > 0 else 1, axis=1)
+    df_copy['fuel_to_monthly_ratio'] = df_copy.apply(
+        lambda r: r['total_fuel_litres'] / r['monthly_avg_fuel_litres']
+        if r['monthly_avg_fuel_litres'] > 0 else 1, axis=1)
 
     # --- Plot 4A: Weekly Base Volatility ---
     plt.figure(figsize=(11, 7))
-    sns.scatterplot(data=df_copy, x='dist_to_weekly_ratio', y='fuel_to_weekly_ratio', s=150, color='#9b59b6', edgecolor='black', alpha=0.8)
+    sns.scatterplot(data=df_copy, x='dist_to_weekly_ratio',
+                    y='fuel_to_weekly_ratio', s=150, color='#9b59b6', edgecolor='black', alpha=0.8)
     plt.axvline(x=1, color='black', linestyle='-', alpha=0.4)
     plt.axhline(y=1, color='black', linestyle='-', alpha=0.4)
-    
+
     mean_wx, std_wx = df_copy['dist_to_weekly_ratio'].mean(), df_copy['dist_to_weekly_ratio'].std()
     mean_wy, std_wy = df_copy['fuel_to_weekly_ratio'].mean(), df_copy['fuel_to_weekly_ratio'].std()
     thresh_wx, thresh_wy = mean_wx + 3 * std_wx, mean_wy + 3 * std_wy
-    
+
     for i in [1, 2, 3]:
         color = '#e67e22' if i == 1 else '#c0392b'
         ls = '--' if i == 1 else ':'
         plt.axvline(mean_wx + i * std_wx, color=color, linestyle=ls, alpha=0.3)
         plt.axhline(mean_wy + i * std_wy, color=color, linestyle=ls, alpha=0.3)
-        if mean_wx - i * std_wx >= 0: plt.axvline(mean_wx - i * std_wx, color=color, linestyle=ls, alpha=0.3)
-        if mean_wy - i * std_wy >= 0: plt.axhline(mean_wy - i * std_wy, color=color, linestyle=ls, alpha=0.3)
-        
-    weekly_outliers = df_copy[(df_copy['dist_to_weekly_ratio'] > thresh_wx) | (df_copy['fuel_to_weekly_ratio'] > thresh_wy)]
+        if mean_wx - i * std_wx >= 0:
+            plt.axvline(mean_wx - i * std_wx, color=color, linestyle=ls,
+                        alpha=0.3)
+        if mean_wy - i * std_wy >= 0:
+            plt.axhline(mean_wy - i * std_wy, color=color, linestyle=ls,
+                        alpha=0.3)
+
+    weekly_outliers = df_copy[(df_copy['dist_to_weekly_ratio'] > thresh_wx) |
+                              (df_copy['fuel_to_weekly_ratio'] > thresh_wy)]
     for idx, row in weekly_outliers.head(2).iterrows():
         plt.annotate(
-            f"Volatility Outlier\n{row['trip_origin']} ➔ {row['trip_destination']}",
+            f"Volatility Outlier\n{row['trip_origin']} ➔ "
+            f"{row['trip_destination']}",
             xy=(row['dist_to_weekly_ratio'], row['fuel_to_weekly_ratio']),
-            xytext=(row['dist_to_weekly_ratio'] - 0.5, row['fuel_to_weekly_ratio'] + 0.5),
-            arrowprops=dict(facecolor='black', shrink=0.08, width=0.5, headwidth=5),
-            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", fc="#f2e6ff", ec="#8e44ad", lw=1)
+            xytext=(row['dist_to_weekly_ratio'] - 0.5,
+                    row['fuel_to_weekly_ratio'] + 0.5),
+            arrowprops=dict(facecolor='black', shrink=0.08, width=0.5,
+                            headwidth=5),
+            fontsize=9, fontweight='bold',
+            bbox=dict(boxstyle="round,pad=0.2", fc="#f2e6ff", ec="#8e44ad",
+                      lw=1)
         )
 
-    plt.title('Operational Volatility: Deviations from Weekly Baselines', fontsize=14, pad=15, fontweight='bold')
+    plt.title('Operational Volatility: Deviations from Weekly Baselines',
+              fontsize=14, pad=15, fontweight='bold')
     plt.xlabel('Distance Ratio (Actual / Weekly Moving Average)')
     plt.ylabel('Fuel Ratio (Actual / Weekly Moving Average)')
     plt.tight_layout()
@@ -308,14 +345,18 @@ def plot_baselines_deviation(
 
     # --- Plot 4B: Monthly Base Macro-Trends ---
     plt.figure(figsize=(11, 7))
-    sns.scatterplot(data=df_copy, x='dist_to_monthly_ratio', y='fuel_to_monthly_ratio', s=150, color='#e67e22', edgecolor='black', alpha=0.8)
+    sns.scatterplot(data=df_copy, x='dist_to_monthly_ratio',
+                    y='fuel_to_monthly_ratio', s=150, color='#e67e22',
+                    edgecolor='black', alpha=0.8)
     plt.axvline(x=1, color='black', linestyle='-', alpha=0.4)
     plt.axhline(y=1, color='black', linestyle='-', alpha=0.4)
-    
-    mean_mx, std_mx = df_copy['dist_to_monthly_ratio'].mean(), df_copy['dist_to_monthly_ratio'].std()
-    mean_my, std_my = df_copy['fuel_to_monthly_ratio'].mean(), df_copy['fuel_to_monthly_ratio'].std()
+
+    mean_mx, std_mx = (df_copy['dist_to_monthly_ratio'].mean(),
+                       df_copy['dist_to_monthly_ratio'].std())
+    mean_my, std_my = (df_copy['fuel_to_monthly_ratio'].mean(),
+                       df_copy['fuel_to_monthly_ratio'].std())
     thresh_mx, thresh_my = mean_mx + 3 * std_mx, mean_my + 3 * std_my
-    
+
     for i in [1, 2, 3]:
         color = '#e67e22' if i == 1 else '#c0392b'
         ls = '--' if i == 1 else ':'
@@ -327,18 +368,23 @@ def plot_baselines_deviation(
         if mean_my - i * std_my >= 0:
             plt.axhline(mean_my - i * std_my, color=color, linestyle=ls,
                         alpha=0.3)
-        
-    monthly_outliers = df_copy[(df_copy['dist_to_monthly_ratio'] > thresh_mx) | (df_copy['fuel_to_monthly_ratio'] > thresh_my)]
+
+    monthly_outliers = df_copy[(df_copy['dist_to_monthly_ratio'] >
+                                 thresh_mx) |
+                                 (df_copy['fuel_to_monthly_ratio'] > thresh_my)]
     for idx, row in monthly_outliers.head(2).iterrows():
         plt.annotate(
             f"Macro Outlier\n{row['trip_origin']} ➔ {row['trip_destination']}",
             xy=(row['dist_to_monthly_ratio'], row['fuel_to_monthly_ratio']),
             xytext=(row['dist_to_monthly_ratio'] - 0.5, row['fuel_to_monthly_ratio'] + 0.5),
             arrowprops=dict(facecolor='black', shrink=0.08, width=0.5, headwidth=5),
-            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", fc="#fff2e6", ec="#d35400", lw=1)
+            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2",
+                                                     fc="#fff2e6", ec="#d35400", lw=1)
         )
 
-    plt.title('Macro-Operational Volatility: Deviations from Monthly Baselines', fontsize=14, pad=15, fontweight='bold')
+    plt.title(
+        'Macro-Operational Volatility: Deviations from Monthly Baselines',
+        fontsize=14, pad=15, fontweight='bold')
     plt.xlabel('Distance Ratio (Actual / Monthly Moving Average)')
     plt.ylabel('Fuel Ratio (Actual / Monthly Moving Average)')
     plt.tight_layout()
@@ -353,15 +399,19 @@ def plot_baseline_historical_correlations(
     Plots moving averages against each other and labels structural tracking drift (>3 sigma).
     """
     fig, axes = plt.subplots(1, 2, figsize=(18, 7))
-    
+
     # --- Subplot A: Weekly Baselines ---
-    sns.scatterplot(data=df, x='weekly_avg_distance_km', y='weekly_avg_fuel_litres', s=150, color='#8e44ad', edgecolor='black', alpha=0.75, ax=axes[0])
+    sns.scatterplot(data=df, x='weekly_avg_distance_km',
+                    y='weekly_avg_fuel_litres', s=150, color='#8e44ad',
+                    edgecolor='black', alpha=0.75, ax=axes[0])
     mean_wx, std_wx = df['weekly_avg_distance_km'].median(), df['weekly_avg_distance_km'].std()
     mean_wy, std_wy = df['weekly_avg_fuel_litres'].median(), df['weekly_avg_fuel_litres'].std()
 
-    axes[0].axvline(mean_wx, color='black', linestyle='-', alpha=0.5, label=fr'$\tilde\mu$_dist: {mean_wx:.0f}')
-    axes[0].axhline(mean_wy, color='black', linestyle='-', alpha=0.5, label=fr'$\tilde\mu$_fuel: {mean_wy:.0f}')
-    
+    axes[0].axvline(mean_wx, color='black', linestyle='-', alpha=0.5,
+                    label=fr'$\tilde\mu$_dist: {mean_wx:.0f}')
+    axes[0].axhline(mean_wy, color='black', linestyle='-', alpha=0.5,
+                    label=fr'$\tilde\mu$_fuel: {mean_wy:.0f}')
+
     for i in [1, 2, 3]:
         color = '#e67e22' if i == 1 else '#c0392b'
         ls = '--' if i == 1 else ':'
@@ -373,7 +423,7 @@ def plot_baseline_historical_correlations(
         if mean_wy - i * std_wy >= 0:
             axes[0].axhline(mean_wy - i * std_wy, color=color, linestyle=ls,
                             alpha=0.3)
-        
+
     w_drift = df[(df['weekly_avg_distance_km'] > (mean_wx + 2*std_wx)) |
                  (df['weekly_avg_fuel_litres'] < (mean_wy - 2*std_wy)) &
                  (df['weekly_avg_distance_km'] > 0)]
@@ -384,21 +434,28 @@ def plot_baseline_historical_correlations(
             xytext=(row['weekly_avg_distance_km'] - 600 + enum_idx*300,
                     row['weekly_avg_fuel_litres'] + 100 + enum_idx*100),
             arrowprops=dict(facecolor='black', shrink=0.08, width=0.5, headwidth=5),
-            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", fc="#f2e6ff", ec="#8e44ad", lw=1)
+            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2",
+                                                     fc="#f2e6ff", ec="#8e44ad", lw=1)
         )
     axes[0].set_title('Macro Profile: Weekly Rolling Baselines', fontweight='bold', fontsize=12)
     axes[0].set_xlabel('Moving Average Distance (km)')
     axes[0].set_ylabel('Moving Average Fuel (L)')
     axes[0].legend(frameon=True, fontsize=10)
-    
+
     # --- Subplot B: Monthly Baselines ---
-    sns.scatterplot(data=df, x='monthly_avg_distance_km', y='monthly_avg_fuel_litres', s=150, color='#d35400', edgecolor='black', alpha=0.75, ax=axes[1])
-    mean_mx, std_mx = df['monthly_avg_distance_km'].median(), df['monthly_avg_distance_km'].std()
-    mean_my, std_my = df['monthly_avg_fuel_litres'].median(), df['monthly_avg_fuel_litres'].std()
-    
-    axes[1].axvline(mean_mx, color='black', linestyle='-', alpha=0.5, label=fr'$\tilde\mu$_dist: {mean_mx:.0f}')
-    axes[1].axhline(mean_my, color='black', linestyle='-', alpha=0.5, label=fr'$\tilde\mu$_fuel: {mean_my:.0f}')
-    
+    sns.scatterplot(data=df, x='monthly_avg_distance_km',
+                    y='monthly_avg_fuel_litres', s=150, color='#d35400',
+                    edgecolor='black', alpha=0.75, ax=axes[1])
+    mean_mx, std_mx = (df['monthly_avg_distance_km'].median(),
+                       df['monthly_avg_distance_km'].std())
+    mean_my, std_my = (df['monthly_avg_fuel_litres'].median(),
+                       df['monthly_avg_fuel_litres'].std())
+
+    axes[1].axvline(mean_mx, color='black', linestyle='-', alpha=0.5,
+                    label=fr'$\tilde\mu$_dist: {mean_mx:.0f}')
+    axes[1].axhline(mean_my, color='black', linestyle='-', alpha=0.5,
+                    label=fr'$\tilde\mu$_fuel: {mean_my:.0f}')
+
     for i in [1, 2, 3]:
         color = '#e67e22' if i == 1 else '#c0392b'
         ls = '--' if i == 1 else ':'
@@ -410,7 +467,7 @@ def plot_baseline_historical_correlations(
         if mean_my - i * std_my >= 0:
             axes[1].axhline(mean_my - i * std_my, color=color, linestyle=ls,
                             alpha=0.3)
-        
+
     m_drift = df[(df['monthly_avg_distance_km'] > (mean_mx + 2*std_mx)) |
                  (df['monthly_avg_fuel_litres'] < (mean_my - 2*std_my)) &
                  (df['monthly_avg_distance_km']) > 0]
@@ -420,21 +477,25 @@ def plot_baseline_historical_correlations(
             xy=(row['monthly_avg_distance_km'], row['monthly_avg_fuel_litres']),
             xytext=(row['monthly_avg_distance_km'] - 600 + enum_idx*400,
                     row['monthly_avg_fuel_litres'] + 100 - enum_idx*200),
-            arrowprops=dict(facecolor='black', shrink=0.08, width=0.5, headwidth=5),
-            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2", fc="#fff2e6", ec="#d35400", lw=1)
+            arrowprops=dict(facecolor='black', shrink=0.08, width=0.5,
+                            headwidth=5),
+            fontsize=9, fontweight='bold', bbox=dict(boxstyle="round,pad=0.2",
+                                                     fc="#fff2e6", ec="#d35400", lw=1)
         )
     axes[1].set_title('Macro Profile: Monthly Rolling Baselines', fontweight='bold', fontsize=12)
     axes[1].set_xlabel('Moving Average Distance (km)')
     axes[1].set_ylabel('Moving Average Fuel (L)')
     axes[1].legend(frameon=True, fontsize=10)
-    
-    plt.suptitle('Fleet Baseline Consistency: Distance vs. Fuel Macro-Correlations', fontsize=15, fontweight='bold', y=0.98)
+
+    plt.suptitle(
+        'Fleet Baseline Consistency: Distance vs. Fuel Macro-Correlations',
+        fontsize=15, fontweight='bold', y=0.98)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.show()
 
 
-def plot_window_efficiency_features(df, 
+def plot_window_efficiency_features(df,
                                     save_path='eda_6_window_efficiency.png'):
     """
     6. Three-panel histogram for the new ±3 day window features.
@@ -487,8 +548,8 @@ def plot_window_efficiency_features(df,
     plt.show()
 
 
-def plot_trip_vs_window_efficiency(df,
-                                   save_path='eda_7_trip_vs_window_efficiency.png'):
+def plot_trip_vs_window_efficiency(
+        df, save_path='eda_7_trip_vs_window_efficiency.png'):
     """
     7. Scatter: per-trip efficiency vs window efficiency, coloured by fuel_source.
     The interesting records are where the two metrics DISAGREE — a normal
@@ -616,6 +677,7 @@ def plot_fuel_source_breakdown(df,
 
 
 def run_full_eda_pipeline(df_input):
+    """Plot data distributions."""
     print("🚀 Running clean, publication-grade modular EDA validations...")
     set_plot_style()
 

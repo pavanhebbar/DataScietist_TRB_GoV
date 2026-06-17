@@ -1,0 +1,120 @@
+trip_date|trip_origin|trip_destination|trip_start_time|trip_end_time|start_odometer|end_odometer|distance_km|vin_or_truck_number|ab_kms|bc_kms|sk_kms|mb_kms|on_kms|ab_fuel|bc_fuel|sk_fuel|mb_fuel|on_fuel|source_file
+02/5/22 |Abbotsford, BC |Valemount, BC |||771515 |772250 |735 |2||735 |||||550 ||||Distance log 2.pdf
+03/5/22 |Valemount, BC |Nisku, AB |||772250 |772750 |500 |2|450 |50 ||||688 |||||Distance log 2.pdf
+04/5/22 |nisku to grande prairie |Nisku, AB |||772750 |773800 |1050 |2|1050 ||||||||||Distance log 2.pdf
+05/5/22 |Nisku, AB |Dawson Creek, BC |||773800 |774430 |630 |2|550 |80 ||||690 |||||Distance log 2.pdf
+06/5/22 |Fort St. Jhon, BC |Nisku, AB |||774430 |775250 |820 |2|600 |220 ||||500 |||||Distance log 2.pdf
+09/5/22 |nisku to grande prairie |Nisku, AB |||775250 |776280 |1030 |2|1030 |||||500 |||||Distance log 2.pdf
+10/5/22 |nisku to grande prairie |Nisku, AB |||776280 |777300 |1020 |2|1020 |||||500 |||||Distance log 2.pdf
+11/5/22 |Nisku, AB |Chetwynd, BC |||777300 |778050 |750 |2|600 |150 |||||||||Distance log 2.pdf
+12/5/22 |Chetwynd, BC |Nisku, AB |||778050 |778950 |900 |2|700 |200 ||||600 |||||Distance log 2.pdf
+15/5/22 |Nisku, AB |Prince George, BC |||778950 |779750 |800 |2|450 |350 |||||||||Distance log 2.pdf
+16/5/22 |Prince George, BC |Nisku, AB |||779750 |780650 |900 |2|550 |350 |||||600 ||||Distance log 2.pdf
+20/5/22 |Nisku to Whitecourt |Nisku, AB |||780650 |781080 |430 |2|430 |||||680 |||||Distance log 2.pdf
+23/5/22 |Nisku, AB |Chetwynd, BC |||781080 |781850 |770 |2|600 |170 ||||250 |||||Distance log 2.pdf
+24/5/22 |Chetwynd, BC |Nisku, AB |||781850 |782700 |850 |2|650 |200 ||||624 |||||Distance log 2.pdf
+25/5/22 |Nisku, AB |Hope, BC |||782700 |783750 |1050 |2|450 |600 |||||||||Distance log 2.pdf
+26/5/22 |Hope to Surrey |Barriere, BC |||783750 |784330 |580 |2||580 |||||620 ||||Distance log 2.pdf
+27/5/22 |Barrier to Lacombe |Nisku, AB |||784330 |785380 |1050 |2|750 |300 ||||600 |||||Distance log 2.pdf
+30/5/22 |Nisku, AB |Hope, BC |||785380 |786430 |1050 |2|450 |600 ||||310 |||||Distance log 2.pdf
+31/5/22 |Hope to Surrey |Valemount, BC |||786430 |787270 |840 |2||840 |||||600 ||||Distance log 2.pdf
+||||||||2|||||||||||Distance log 2.pdf
+01/4/22 |Kelowna, BC |Nisku, AB |||754000 |755050 |1050 |2|500 |550 |||||550 ||||Distance log 2.pdf
+04/4/22 |Nisku, AB |Clairmont, AB |||755050 |755600 |550 |2|550 |||||963 |||||Distance log 2.pdf
+05/4/22 |Clairmont to FSJ, BC |Nisku, AB |||755600 |756550 |950 |2|650 |300 |||||||||Distance log 2.pdf
+06/4/22 |Nisku to prince george |Jasper, AB |||756550 |757700 |1150 |2|500 |650 |||||||||Distance log 2.pdf
+07/4/22 |nisku to grande prairie |Nisku, AB |||757700 |758800 |1100 |2|1100 |||||690 |||||Distance log 2.pdf
+10/4/22 |Nisku, AB |Grande Prairie, AB |||758800 |759300 |500 |2|500 |||||630 |||||Distance log 2.pdf
+11/4/22 |Grande Prairie, AB |Nisku, AB |||759300 |759850 |550 |2|550 |||||350 |||||Distance log 2.pdf
+12/4/22 |Nisku, AB |Kelowna, BC |||759850 |760850 |1000 |2|500 |500 |||||500 ||||Distance log 2.pdf
+13/4/22 |Kelowna, BC |Nisku, AB |||760850 |761800 |950 |2|450 |500 ||||500 |||||Distance log 2.pdf
+14/4/22 |Nisku, AB |Prince George, BC |||761800 |762600 |800 |2|450 |350 |||||||||Distance log 2.pdf
+15/4/22 |Prince George, BC |Nisku, AB |||762600 |763450 |850 |2|500 |350 |||||400 ||||Distance log 2.pdf
+18/4/22 |Nisku, AB |Fort St. Jhon, BC |||763450 |764150 |700 |2|550 |150 ||||610 |||||Distance log 2.pdf
+19/4/22 |Fort St. Jhon, BC |Nisku, AB |||764150 |764900 |750 |2|600 |150 ||||550 |||||Distance log 2.pdf
+20/4/22 |Nisku to Manning |Chetwynd, BC |||764900 |765950 |1050 |2|900 |150 ||||440 |||||Distance log 2.pdf
+21/4/22 |Chetwynd to PG, BC |Nisku, AB |||765950 |767050 |1100 |2|500 |600 |||||350 ||||Distance log 2.pdf
+22/4/22 |Nisku, AB |Nisku, AB |||767050 |767170 |120 |2|120 ||||||||||Distance log 2.pdf
+24/4/22 |Nisku, AB |Agassiz, BC |||767170 |768270 |1100 |2|500 |600 ||||740 |||||Distance log 2.pdf
+25/4/22 |Agassiz, BC |Hinton, AB |||768270 |769270 |1000 |2|800 |200 |||||535 ||||Distance log 2.pdf
+26/4/22 |Hinton to GP, AB |Nisku, AB |||769270 |770320 |1050 |2|1050 |||||600 |||||Distance log 2.pdf
+28/4/22 |Nisku, AB |Abbotsford, BC |||770320 |771515 |1195 |2|530 |665 ||||662 |||||Distance log 2.pdf
+01/3/22 |Nisku, AB |Fort St. Jhon, BC |||731600 |732400 |800 |2|650 |150 ||||650 |||||Distance log 2.pdf
+02/3/22 |Fort St. Jhon, BC |Nisku to Fox Creek |||732400 |733470 |1070 |2|920 |150 ||||700 |||||Distance log 2.pdf
+03/3/22 |Fox Creek to Grande Prairie |Nisku to Valleyview |||733470 |734550 |1080 |2|1080 |||||700 |||||Distance log 2.pdf
+04/3/22 |Valleyview, AB |Chetwynd to Nisku |||734550 |735650 |1100 |2|750 |350 |||||||||Distance log 2.pdf
+07/3/22 |Nisku to Chetwynd |Prince George, BC |||735650 |736700 |1050 |2|650 |400 ||||850 |||||Distance log 2.pdf
+08/3/22 |Prince George, BC |Nisku, AB |||736700 |737550 |850 |2|500 |350 ||||650 |||||Distance log 2.pdf
+09/3/22 |nisku to grande prairie |Nisku, AB |||737550 |738550 |1000 |2|1000 |||||621 |||||Distance log 2.pdf
+10/3/22 |Nisku to Chetwynd |Prince George, BC |||738550 |739600 |1050 |2|650 |400 |||||650 ||||Distance log 2.pdf
+11/3/22 |Prince George, BC |Nisku, AB |||739600 |740600 |1000 |2|650 |350 |||||||||Distance log 2.pdf
+14/3/22 |nisku to grande prairie |Nisku, AB |||740600 |741650 |1050 |2|1050 |||||650 |||||Distance log 2.pdf
+15/3/22 |Nisku to Clairmont |Nisku, AB |||741650 |742700 |1050 |2|1050 |||||750 |||||Distance log 2.pdf
+16/3/22 |Nisku to Hinton |Red Deer to Nisku |||742700 |743580 |880 |2|880 |||||600 |||||Distance log 2.pdf
+17/3/22 |Nisku, AB |Prince George, BC |||743580 |744350 |770 |2|420 |350 ||||330 |||||Distance log 2.pdf
+18/3/22 |Prince George, BC |Nisku, AB |||744350 |745300 |950 |2|600 |350 ||||550 |||||Distance log 2.pdf
+21/3/22 |Nisku to Hinton |Calgary to Nisku |||745300 |746450 |1150 |2|1150 |||||350 |||||Distance log 2.pdf
+22/3/22 |Nisku to Clairmont |Acheson to Clairmont |||746450 |747550 |1100 |2|1100 |||||500 |||||Distance log 2.pdf
+23/3/22 |Clairmont to Edm. |Edm. to Clairmont |||747550 |748650 |1100 |2|1100 |||||500 |||||Distance log 2.pdf
+24/3/22 |Clairmont to Edm. |Edm. to Clairmont |||748650 |749750 |1100 |2|1100 |||||550 |||||Distance log 2.pdf
+25/3/22 |Clairmont to Edm. |Nisku, AB |||749750 |750450 |700 |2|700 |||||550 |||||Distance log 2.pdf
+28/3/22 |Nisku, AB |Kamloops, BC |||750450 |751350 |900 |2|450 |450 ||||550 |||||Distance log 2.pdf
+29/3/22 |Kamloops to Surrey |Valemount, BC |||751350 |752380 |1030 |2||1030 |||||500 ||||Distance log 2.pdf
+30/3/22 |Valemount, BC |Nisku, AB |||752380 |752980 |600 |2|500 |100 ||||690 |||||Distance log 2.pdf
+31/3/22 |Nisku, AB |Kelowna, BC |||752980 |754000 |1020 |2|520 |500 |||||||||Distance log 2.pdf
+||||||to F1 ||2|||||||||||Distance log 2.pdf
+06/2/22 |Nisku, AB |Kelowna, BC |||716080 |717150 |1070 |2|500 |570 ||||550 |||||Distance log 2.pdf
+07/2/22 |Kelowna, BC |Grande Prairie, AB |||717150 |718200 |1050 |2|550 |500 ||||550 |477 ||||Distance log 2.pdf
+08/2/22 |Fort St. Jhon, BC |Nisku, AB |||718200 |719150 |950 |2|650 |300 |||||||||Distance log 2.pdf
+09/2/22 |Nisku, AB |Fort St. Jhon, BC |||719150 |720050 |900 |2|750 |150 ||||645 |||||Distance log 2.pdf
+10/2/22 |Grande Prairie, AB |Nisku, AB |||720050 |720580 |530 |2|400 |130 ||||640 |||||Distance log 2.pdf
+13/2/22 |Nisku to Kamloops |Williams Lake,BC |||720580 |721780 |1200 |2|500 |700 |||||||||Distance log 2.pdf
+14/2/22 |Williams Lake, BC |Nisku, AB |||721780 |722830 |1050 |2|550 |500 |||||646 ||||Distance log 2.pdf
+15/2/22 |Nisku, AB |Fort St. Jhon, BC |||722830 |723630 |800 |2|650 |150 ||||680 |||||Distance log 2.pdf
+16/2/22 |Fort St. Jhon, BC |Nisku, AB |||723630 |724480 |850 |2|700 |150 ||||650 |||||Distance log 2.pdf
+17/2/22 |Nisku, AB |Valleyview, AB |||724480 |724850 |370 |2|370 ||||||||||Distance log 2.pdf
+18/2/22 |Grande Prairie, AB |Nisku, AB |||724850 |725500 |650 |2|650 |||||400 |||||Distance log 2.pdf
+21/2/22 |Nisku, AB |Fort St. Jhon, BC |||725500 |726300 |800 |2|650 |150 ||||550 |||||Distance log 2.pdf
+22/2/22 |Fort St. Jhon, BC |Nisku to Calgary |||726300 |727450 |1150 |2|1000 |150 ||||730 |||||Distance log 2.pdf
+23/2/22 |Calgary to Grande Prairie |Nisku, AB |||727450 |728650 |1200 |2|1200 |||||680 |||||Distance log 2.pdf
+24/2/22 |Nisku to Chetwynd |Prince George, BC |||728650 |729750 |1100 |2|650 |450 ||||440 |||||Distance log 2.pdf
+25/2/22 |Prince George, BC |Nisku, AB |||729750 |730600 |850 |2|450 |350 |||||340 ||||Distance log 2.pdf
+28/2/22 |nisku to grande prairie |Nisku, AB |||730600 |731600 |1000 |2|1000 |||||530 |||||Distance log 2.pdf
+02/1/22 |Nisku, AB |Grande Prairie, AB |||702870 |703370 |500 |2|500 |||||500 |||||Distance log 2.pdf
+03/1/22 |Grande Prairie, AB |Nisku, AB |||703370 |704000 |630 |2|630 ||||||||||Distance log 2.pdf
+10/1/22 |Nisku to Grande prairie |Nisku, AB |||704000 |704950 |950 |2|950 |||||700 |||||Distance log 2.pdf
+11/1/22 |Nisku, AB |Kamloops, BC |||704950 |705800 |850 |2|400 |450 ||||550 |||||Distance log 2.pdf
+12/1/22 |Kamloops, BC |Nisku, AB |||705800 |706600 |800 |2|350 |450 |||||600 ||||Distance log 2.pdf
+13/1/22 |nisku to grande prairie |Nisku, AB |||706600 |707600 |1000 |2|1000 |||||610 |||||Distance log 2.pdf
+14/1/22 |nisku to grande prairie |Nisku, AB |||707600 |708650 |1050 |2|1050 ||||||||||Distance log 2.pdf
+18/1/22 |Nisku, AB |Fort St. Jhon, BC |||708650 |709220 |570 |2|420 |150 ||||724 |||||Distance log 2.pdf
+19/1/22 |Fort St. Jhon, BC |Red Deer to Nisku |||709220 |710250 |1030 |2|880 |150 ||||650 |||||Distance log 2.pdf
+20/1/22 |Nisku, AB |Prince George, BC |||710250 |711050 |800 |2|450 |350 ||||432 |||||Distance log 2.pdf
+21/1/22 |Prince George, BC |Nisku, AB |||711050 |712000 |950 |2|550 |400 |||||345 ||||Distance log 2.pdf
+24/1/22 |Nisku, AB |Grande Prairie, AB |||712000 |712550 |550 |2|550 |||||645 |||||Distance log 2.pdf
+25/1/22 |Grande Prairie, AB |Nisku, AB |||712550 |713150 |600 |2|600 |||||585 |||||Distance log 2.pdf
+26/1/22 |Nisku, AB |Fort St. Jhon, BC |||713150 |713950 |800 |2|650 |150 |||||||||Distance log 2.pdf
+27/1/22 |Fort St. Jhon, BC |Nisku, AB |||713950 |714630 |680 |2|530 |150 ||||650 |||||Distance log 2.pdf
+30/1/22 |Nisku, AB |Fort St. Jhon, BC |||714630 |715230 |600 |2|500 |100 |||||||||Distance log 2.pdf
+31/1/22 |Fort St. Jhon, BC |Nisku, AB |||715230 |716080 |850 |2|600 |200 ||||690 |||||Distance log 2.pdf
+01/6/22 |Valemount, BC |Nisku, AB |||787270 |787800 |530 |2||80 ||||600 |||||Distance log 2.pdf
+02/6/22 |Nisku to Fort Sask, |Nisku, AB |||787800 |788100 |300 |2|300 ||||||||||Distance log 2.pdf
+06/6/22 |Nisku to Spruce Grove |Nisku, AB |||788100 |788250 |150 |2|150 |||||380 |||||Distance log 2.pdf
+07/6/22 |Nisku, AB |Fort St. Jhon, BC |||788250 |788950 |700 |2|580 |120 |||||||||Distance log 2.pdf
+08/6/22 |Fort st jhon to Nisku |whitecourt, AB |||788950 |789900 |950 |2|800 |150 ||||650 |||||Distance log 2.pdf
+09/6/22 |Whitecourt to GP, AB |Nisku to Valleyview |||789900 |791050 |1150 |2|1150 |||||585 |||||Distance log 2.pdf
+10/6/22 |Chetwynd, BC |Nisku, AB |||791050 |792200 |1150 |2|850 |300 ||||630 |||||Distance log 2.pdf
+14/6/22 |Nisku, AB |Prince George, BC |||792200 |793050 |850 |2|500 |350 ||||420 |||||Distance log 2.pdf
+15/6/22 |Prince George, BC |Nisku, AB |||793050 |793870 |820 |2|470 |350 ||||642 |||||Distance log 2.pdf
+16/6/22 |Nisku to Fort Sask, |Nisku, AB |||793870 |794270 |400 |2|400 ||||||||||Distance log 2.pdf
+19/6/22 |Nisku, AB |Prince George, BC |||794270 |795220 |950 |2|550 |400 ||||400 |||||Distance log 2.pdf
+20/6/22 |Prince George, BC |Nisku, AB |||795220 |796200 |980 |2|580 |400 ||||650 |||||Distance log 2.pdf
+21/6/22 |Nisku to GP, AB |Nisku, AB |||796200 |797250 |1050 |2|1050 |||||550 |||||Distance log 2.pdf
+22/6/22 |Nisku to Fox Creek |Nisku, AB |||797250 |797850 |600 |2|600 ||||||||||Distance log 2.pdf
+23/6/22 |Nisku, AB |Chetwynd, BC |||797850 |798650 |800 |2|650 |150 ||||570 |||||Distance log 2.pdf
+24/6/22 |Chetwynd, BC |Nisku, AB |||798650 |799500 |850 |2|650 |200 ||||645 |||||Distance log 2.pdf
+26/6/22 |Nisku, AB |Prince George, BC |||799500 |800250 |750 |2|400 |350 |||||||||Distance log 2.pdf
+27/6/22 |Prince George, BC |Kamloops, BC |||800250 |801050 |800 |2||800 |||||450 ||||Distance log 2.pdf
+28/6/22 |coldstream, BC |Abbotsford, BC |||801050 |801700 |650 |2||650 |||||500 ||||Distance log 2.pdf
+29/6/22 |Abbotsford, BC |Valemount, BC |||801700 |802330 |630 |2||630 |||||||||Distance log 2.pdf
+30/6/22 |Valemount, BC |Nisku, AB |||802330 |802980 |650 |2|550 |100 ||||700 |||||Distance log 2.pdf

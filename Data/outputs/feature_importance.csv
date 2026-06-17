@@ -1,6 +1,5 @@
 Feature,Selection Frequency
 km_per_tank,2
+fuel_source_reliability,2
 fuel_litres_per_km,1
 provincial_sum_km,1
-fuel_to_weekly_ratio,1
-fuel_to_monthly_ratio,1

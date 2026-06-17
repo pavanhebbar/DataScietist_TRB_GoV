@@ -1,163 +1,23 @@
 """Python program to extract IFTA relevant data.
 
-Uses AWS Textract for extracting data from scanned images.
-AWS region set to ca-central-1 since Textract is unavailable in ca-west-1
+Things to complete by tonight:
+1. Check for rows where quantities are missing
+2. Resolve into federal and proincial taxes
+
 """
 
-from pathlib import Path
-import re
-import shutil
+import io
 import boto3
 from botocore.exceptions import ClientError
 import docx2txt
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from pypdf import PdfReader
+import re
+import shutil
 from textractor import Textractor
 from textractor.data.constants import TextractFeatures
-
-
-# ── Column alias maps ─────────────────────────────────────────────────────────
-# Maps every known variation → standard column name
-# Matching is done on lowercased, stripped, whitespace-normalized column names
-
-DISTANCE_COLUMN_ALIASES = {
-    # trip_date
-    'date': 'trip_date', 'trip date': 'trip_date',
-    'trip_date': 'trip_date',
-
-    # trip_origin
-    'origin': 'trip_origin', 'trip origin': 'trip_origin',
-    'trip_origin': 'trip_origin', 'starting point': 'trip_origin',
-    'start location': 'trip_origin', 'from': 'trip_origin',
-
-    # trip_destination
-    'destination': 'trip_destination', 'trip destination': 'trip_destination',
-    'trip_destination': 'trip_destination', 'to': 'trip_destination',
-    'end location': 'trip_destination',
-
-    # trip_start_time
-    'start time': 'trip_start_time', 'trip_start_time': 'trip_start_time',
-    'trip start time': 'trip_start_time', 'departure time': 'trip_start_time',
-
-    # trip_end_time
-    'end time': 'trip_end_time', 'trip_end_time': 'trip_end_time',
-    'trip end time': 'trip_end_time', 'arrival time': 'trip_end_time',
-
-    # start_odometer
-    'start_odometer': 'start_odometer', 'start odometer': 'start_odometer',
-    'start km': 'start_odometer', 'start kms': 'start_odometer',
-    'odometer start': 'start_odometer', 'begin odometer': 'start_odometer',
-
-    # end_odometer
-    'end_odometer': 'end_odometer', 'end odometer': 'end_odometer',
-    'end km': 'end_odometer', 'end kms': 'end_odometer',
-    'odometer end': 'end_odometer', 'finish odometer': 'end_odometer',
-
-    # distance_km
-    'distance_km': 'distance_km', 'distance km': 'distance_km',
-    'distance': 'distance_km', 'total km': 'distance_km',
-    'total kms': 'distance_km', 'total_km': 'distance_km',
-    'km': 'distance_km', 'kms': 'distance_km',
-
-    # vin_or_truck_number
-    'vin_or_truck_number': 'vin_or_truck_number', 'vin': 'vin_or_truck_number',
-    'truck number': 'vin_or_truck_number', 'truck no': 'vin_or_truck_number',
-    'vehicle id': 'vin_or_truck_number', 'unit': 'vin_or_truck_number',
-    'unit number': 'vin_or_truck_number',
-
-    # provincial km columns
-    'ab kms': 'ab_kms', 'ab km': 'ab_kms', 'ab_kms': 'ab_kms',
-    'alberta km': 'ab_kms', 'alberta kms': 'ab_kms',
-    'bc kms': 'bc_kms', 'bc km': 'bc_kms', 'bc_kms': 'bc_kms',
-    'british columbia km': 'bc_kms',
-    'sk kms': 'sk_kms', 'sk km': 'sk_kms', 'sk_kms': 'sk_kms',
-    'saskatchewan km': 'sk_kms',
-    'mb kms': 'mb_kms', 'mb km': 'mb_kms', 'mb_kms': 'mb_kms',
-    'manitoba km': 'mb_kms',
-    'on kms': 'on_kms', 'on km': 'on_kms', 'on_kms': 'on_kms',
-    'ontario km': 'on_kms',
-
-    # provincial fuel columns
-    'ab fuel': 'ab_fuel', 'ab_fuel': 'ab_fuel', 'alberta fuel': 'ab_fuel',
-    'bc fuel': 'bc_fuel', 'bc_fuel': 'bc_fuel', 'british columbia fuel': 'bc_fuel',
-    'sk fuel': 'sk_fuel', 'sk_fuel': 'sk_fuel', 'saskatchewan fuel': 'sk_fuel',
-    'mb fuel': 'mb_fuel', 'mb_fuel': 'mb_fuel', 'manitoba fuel': 'mb_fuel',
-    'on fuel': 'on_fuel', 'on_fuel': 'on_fuel', 'ontario fuel': 'on_fuel',
-}
-
-INVOICE_COLUMN_ALIASES = {
-    # invoice_number
-    'invoice_number': 'invoice_number', 'invoice number': 'invoice_number',
-    'invoice no': 'invoice_number', 'invoice #': 'invoice_number',
-    'receipt number': 'invoice_number', 'receipt no': 'invoice_number',
-    'receipt #': 'invoice_number', 'receipt_number': 'invoice_number',
-    'transaction number': 'invoice_number', 'ref number': 'invoice_number',
-
-    # date
-    'date': 'date', 'transaction date': 'date', 'invoice date': 'date',
-    'purchase date': 'date',
-
-    # time
-    'time': 'time', 'transaction time': 'time', 'purchase time': 'time',
-
-    # vendor_name
-    'vendor_name': 'vendor_name', 'vendor name': 'vendor_name',
-    'vendor': 'vendor_name', 'store': 'vendor_name',
-    'store name': 'vendor_name', 'merchant': 'vendor_name',
-    'retailer': 'vendor_name', 'company': 'vendor_name',
-
-    # city
-    'city': 'city', 'location': 'city', 'town': 'city',
-    'purchase location': 'city', 'purchase city': 'city',
-
-    # province
-    'province': 'province', 'prov': 'province', 'state': 'province',
-    'purchase province': 'province', 'jurisdiction': 'province',
-
-    # fuel_type
-    'fuel_type': 'fuel_type', 'fuel type': 'fuel_type',
-    'type': 'fuel_type', 'product': 'fuel_type', 'fuel': 'fuel_type',
-
-    # fuel_grade
-    'fuel_grade': 'fuel_grade', 'fuel grade': 'fuel_grade',
-    'grade': 'fuel_grade', 'product grade': 'fuel_grade',
-
-    # quantity
-    'quantity': 'quantity', 'litres': 'quantity', 'liters': 'quantity',
-    'volume': 'quantity', 'qty': 'quantity', 'amount (l)': 'quantity',
-    'fuel quantity': 'quantity', 'fuel litres': 'quantity',
-    'litres purchased': 'quantity',
-
-    # cost_per_litre
-    'cost_per_litre': 'cost_per_litre', 'cost per litre': 'cost_per_litre',
-    'price per litre': 'cost_per_litre', 'price/l': 'cost_per_litre',
-    '$/l': 'cost_per_litre', 'unit price': 'cost_per_litre',
-    'price per liter': 'cost_per_litre', 'rate': 'cost_per_litre',
-
-    # cost
-    'cost': 'cost', 'total cost': 'cost', 'total': 'cost',
-    'amount': 'cost', 'fuel cost': 'cost', 'subtotal': 'cost',
-    'net amount': 'cost',
-
-    # total_tax
-    'total_tax': 'total_tax', 'total tax': 'total_tax',
-    'tax': 'total_tax', 'taxes': 'total_tax', 'tax total': 'total_tax',
-
-    # fed_tax
-    'fed_tax': 'fed_tax', 'federal tax': 'fed_tax', 'gst': 'fed_tax',
-    'hst': 'fed_tax', 'federal': 'fed_tax',
-
-    # prov_tax
-    'prov_tax': 'prov_tax', 'provincial tax': 'prov_tax', 'pst': 'prov_tax',
-    'provincial': 'prov_tax',
-
-    # payment_form
-    'payment_form': 'payment_form', 'payment form': 'payment_form',
-    'form of payment': 'payment_form', 'payment': 'payment_form',
-    'payment method': 'payment_form', 'payment type': 'payment_form',
-    'tender': 'payment_form',
-}
 
 
 def check_file(filename):
@@ -226,34 +86,15 @@ def run_textract_largepdf(pdffile, bucket_name='textract-storage-prh'):
     return document.tables
 
 
-def get_conf_df_textracttable(textract_table, column_names, skipheader=True):
-    "Get confidence scores of an extracted table from textract."
-    # Sort cells by row and column index to ensure correct order
-    sorted_cells = sorted(textract_table.table_cells,
-                          key=lambda c: (c.row_index, c.col_index))
-    cell_confs = [cell.confidence for cell in sorted_cells]
-    table_conf = np.array(cell_confs).reshape(
-        textract_table.row_count, textract_table.column_count)
-    # By default confidence scores of headers aren't recorded
-    if skipheader:
-        conf_df = pd.DataFrame(table_conf[1:, :], columns=column_names)
-    else:
-        conf_df = pd.DataFrame(table_conf, columns=column_names)
-    return conf_df
-
-
 def get_df_texttables_special(textract_tables):
     """Special case when only the first page has the column names."""
     all_table_dfs = []
-    all_conf_dfs = []
     column_headers = None
 
     for i, table in enumerate(textract_tables):
         if i == 0:
             df_temp = table.to_pandas(use_columns=True)
             column_headers = df_temp.columns.tolist()
-            conf_df = get_conf_df_textracttable(
-                table, column_headers, skipheader=True)
         else:
             df_temp = table.to_pandas(use_columns=False)
             # Check for same number of columns
@@ -261,15 +102,11 @@ def get_df_texttables_special(textract_tables):
                 df_temp.columns = column_headers
             else:
                 raise ValueError(f"Size mismatch at table {i}")
-            conf_df = get_conf_df_textracttable(
-                table, column_headers, skipheader=False)
 
         all_table_dfs.append(df_temp)
-        all_conf_dfs.append(conf_df)
 
     df_combined = pd.concat(all_table_dfs, ignore_index=True)
-    conf_df_comb = pd.concat(all_conf_dfs, ignore_index=True)
-    return df_combined, conf_df_comb
+    return df_combined
 
 
 def get_df_from_textract_tables(textract_tables, column_names=None,
@@ -281,18 +118,16 @@ def get_df_from_textract_tables(textract_tables, column_names=None,
     is the same. If lengths are not the same, then error is thrown
     """
     if not textract_tables:
-        return pd.DataFrame(), pd.DataFrame()
-
+        return pd.DataFrame()
+    
     # If there is only one table. Just return the dataframe of the table
     if len(textract_tables) == 1:
-        table_df = textract_tables[0].to_pandas(use_columns=True)
-        column_names = table_df.columns.tolist()
-        conf_df = get_conf_df_textracttable(textract_tables[0], column_names)
-        return table_df, conf_df
+        return textract_tables[0].to_pandas(use_columns=True)
 
     # If column names are not listed in every table, use the special case
     if not column_names_everytable:
         return get_df_texttables_special(textract_tables)
+    
     if column_names is None:
         # Use column names from the first table
         column_names = [
@@ -300,7 +135,6 @@ def get_df_from_textract_tables(textract_tables, column_names=None,
             if cell.row_index == 1]
 
     all_table_dfs = []
-    all_confs_dfs = []
     for i, table in enumerate(textract_tables):
         df_temp = table.to_pandas(use_columns=True)
         columns_temp = df_temp.columns.tolist()
@@ -313,13 +147,10 @@ def get_df_from_textract_tables(textract_tables, column_names=None,
                 print(f"Column name will be replaced with {col1}")
 
         df_temp.columns = column_names
-        conf_df_temp = get_conf_df_textracttable(table, column_names)
         all_table_dfs.append(df_temp)
-        all_confs_dfs.append(conf_df_temp)
 
     df_combined = pd.concat(all_table_dfs, ignore_index=True)
-    conf_df_combined = pd.concat(all_confs_dfs, ignore_index=True)
-    return df_combined, conf_df_combined
+    return df_combined
 
 
 def extract_images_docx(docxfile, target_dir):
@@ -342,7 +173,6 @@ def process_images_textractor(image_paths):
             exp_data_full = expense_doc.expense_documents[0]
             summ_dict = []  # Safe initialization for both blocks!
 
-            # Get summary fields with confidence scores if they exist
             if exp_data_full.summary_fields_list:
                 for field in exp_data_full.summary_fields_list:
                     f_type = field.type.text if field.type else ""
@@ -356,7 +186,7 @@ def process_images_textractor(image_paths):
                         'value': str(f_value).strip().upper(),
                     })
 
-            # Add fields from line item groups with conf scores
+            # Add fields from line item groups
             if exp_data_full.line_items_groups:
                 for group in exp_data_full.line_items_groups:
                     for row in group.rows:
@@ -366,7 +196,7 @@ def process_images_textractor(image_paths):
                             f_conf = cell.type.confidence if cell.type else 0.0
                             f_label = cell.type.text if cell.type else ""
                             f_value = cell.value.text if cell.value else ""
-
+                            
                             if f_value:
                                 summ_dict.append({
                                     'type': str(f_type).strip().upper(),
@@ -374,7 +204,7 @@ def process_images_textractor(image_paths):
                                     'label': str(f_label).strip().lower(),
                                     'value': str(f_value).strip().upper(),
                                 })
-        # Get raw text lines in case they were missed in summary and line items
+        # Get raw text lines in case they were missed in summary
         if expense_doc.lines:
             raw_text_lines = [line.text.strip()
                               for line in expense_doc.lines if line.text]
@@ -390,7 +220,6 @@ def clean_numeric(val_str):
     """Strip currencies, text, and spaces to isolate clean numeric strings."""
     if not val_str:
         return None
-    # Anything other than digits/decimal point/hyphen (for dates) is removed
     cleaned = re.sub(r'[^\d\.\-]', '', val_str)
     return cleaned if cleaned else None
 
@@ -401,7 +230,7 @@ def update_field_value(f_type, f_label, fval, fconf, match_fields,
     """Check if the input field should update std_field based on field rank."""
     std_fval = currstd_fval
     std_fconf = curr_stdfconf
-
+    
     # Check rank
     ftype_pos = match_fields.index(f_type) if f_type in match_fields else 100
     flabel_pos = match_fields.index(f_label) if f_label in match_fields else 100
@@ -426,65 +255,36 @@ def scrape_missing_metrics_from_text(std_record, raw_blob):
     """
     # 1. QUANTITY (LITERS) FALLBACK
     if not std_record['quantity']:
-        # Litres could be in the front or back of numeric val
-        qty_pattern = r"""
-                       (?:LITRES|LITERS|\bL\b)[:\-]?\s+(\d+\.\d{2,3})
-                       |
-                       (\d+\.\d{2,3})\s*(?:LITRES|LITERS|\bL\b)
-                       """
-        qty_match = re.search(qty_pattern, raw_blob, re.VERBOSE | re.IGNORECASE)
+        qty_pattern = r'(?:LITRES|LITERS|\bL\b)[:\-]?\s+(\d+\.\d{2,3})|(\d+\.\d{2,3})\s*(?:LITRES|LITERS|\bL\b)'
+        qty_match = re.search(qty_pattern, raw_blob)
         if qty_match:
-            std_record['quantity'] = (
-                qty_match.group(1) if qty_match.group(1)
-                else qty_match.group(2))
+            std_record['quantity'] = qty_match.group(1) if qty_match.group(1) else qty_match.group(2)
 
     # 2. UNIT COST (PRICE PER LITRE / GALLON) FALLBACK
     if not std_record['cost_per_litre']:
-        price_pattern_l = r"""
-            PRICE/[L](?:ITRE)?[:\-]?\s*\$?[:\-]?\s*\$?(\d+\.\d{2,3})
-            |
-            (\d+\.\d{2,3})\s*PRICE/[L](?:ITRE)?
-            """
-        price_pattern_g = r"""
-            PRICE/[G](?:ALLON)?[:\-]?\s*\$?[:\-]?\s*\$?(\d+\.\d{2,3})
-            |
-            (\d+\.\d{2,3})\s*PRICE/[G](?:ALLON)?
-            """
-        price_match_l = re.search(price_pattern_l, raw_blob,
-                                  re.VERBOSE | re.IGNORECASE)
-        if price_match_l:
-            std_record['cost_per_litre'] = (
-                price_match_l.group(1)
-                if price_match_l.group(1) else price_match_l.group(2))
-        else:
-            price_match_g = re.search(price_pattern_g, raw_blob,
-                                      re.VERBOSE | re.IGNORECASE)
-            if price_match_g:
-                std_record['cost_per_litre'] = (
-                    str(float(price_match_g.group(1))*0.264173)
-                    if price_match_g.group(1) else str(float(
-                        price_match_g.group(2))*0.264173))
+        price_pattern = r'PRICE/[LG](?:ITRE)?[:\-]?\s*\$?[:\-]?\s*\$?(\d+\.\d{2,3})|(\d+\.\d{2,3})\s*PRICE/[LG](?:ITRE)?'
+        price_match = re.search(price_pattern, raw_blob)
+        if price_match:
+            std_record['cost_per_litre'] = price_match.group(1) if price_match.group(1) else price_match.group(2)
 
     # 3. FIX FOR COSTCO (DECOUPLING DUPLICATED ATTRIBUTES)
     # If Textract misaligns bounding boxes and assigns the quantity to the unit price slot
     if std_record['quantity'] and std_record['cost_per_litre']:
         if float(std_record['quantity']) == float(std_record['cost_per_litre']):
-            # Scan the raw text stream numeric value after Price/L(ITRE)
-            true_price_match = re.search(
-                r'(?:PRICE/LITRE|PRICE/L)[:\-]?\s*\$?(\d+\.\d{2,3})', raw_blob)
+            # Scan the raw text stream for the true standalone pricing pattern (e.g., "$1.179")
+            # looking for a number following a standard pattern that isn't the volume number
+            true_price_match = re.search(r'(?:PRICE/LITRE|PRICE/L)[:\-]?\s*\$?(\d+\.\d{2,3})', raw_blob)
             if true_price_match:
                 std_record['cost_per_litre'] = true_price_match.group(1)
 
     # 4. PREPAID FOOTER SCANNER (For Burnaby and similar prepay receipts)
     # If we have a cost (like $30.00) but are missing either volume metrics
-    if std_record['cost'] and (not std_record['quantity'] or
-                               not std_record['cost_per_litre']):
-        # Check if the receipt contains a prepaid indicator line
+    if std_record['cost'] and (not std_record['quantity'] or not std_record['cost_per_litre']):
+        # If the receipt contains a prepaid indicator line
         if 'PREPAY' in raw_blob or 'PRE-PAY' in raw_blob:
             # Look for tax inclusions or text fragments that pinpoint real calculated metrics
             # Shell receipts hide the GST tax calculation total down at the bottom
-            gst_inc_match = re.search(
-                r'FUEL INCLUDES\s+GST\s+\d+\.\d+%\s*\$?(\d+\.\d{2})', raw_blob)
+            gst_inc_match = re.search(r'FUEL INCLUDES\s+GST\s+\d+\.\d+%\s*\$?(\d+\.\d{2})', raw_blob)
             if gst_inc_match and not std_record['fed_tax']:
                 std_record['fed_tax'] = gst_inc_match.group(1)
 
@@ -492,42 +292,37 @@ def scrape_missing_metrics_from_text(std_record, raw_blob):
 
 
 def extract_granular_taxes(raw_blob):
-    """Extract provincial and federal taxes"""
-    fed_tax = None
-    prov_tax = None
-
+    fed_tax = 0.00
+    prov_tax = 0.00
+    
     # Split text into uppercase string components
     lines = [line.upper() for line in raw_blob.split('\n')]
-
+    
     for line in lines:
         # Step A: Process Federal (GST/HST)
         if 'GST' in line or 'F-HST' in line:
             # 1. Look for currency format directly associated with the keyword token
             # Avoids corporate business numbers completely by requiring exactly two decimal places
-            match = re.search(
-                r'(?:GST|F-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b', line)
+            match = re.search(r'(?:GST|F-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b', line)
             if match:
                 fed_tax = float(match.group(1))
-            # 2. Catch trailing inclusive amounts that matchdecimal format
+            # 2. Fallback: Catch trailing inclusive amounts only if it matches standard decimal format
             elif 'INCL' in line:
                 match_incl = re.search(r'\$\s*(\d{1,3}\.\d{2})', line)
                 if match_incl:
                     fed_tax = float(match_incl.group(1))
                     print(fed_tax)
-
+                    
         # Step B: Process Provincial (PST/QST/BC TAX)
         if any(token in line for token in ['PST', 'QST', 'BC TAX', 'PROV',
                                            'P-HST']):
-            match = re.search(
-                r"""
-                (?:PST|QST|BC TAX|PROV|P-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b
-                """, line, re.VERBOSE | re.IGNORECASE)
+            # Protect against picking up a percentage number like 7.0% by looking for standard dollar values
+            match = re.search(r'(?:PST|QST|BC TAX|PROV|P-HST)[^0-9]*?\$?\s*(\d{1,3}\.\d{2})\b', line)
             if match:
                 prov_tax = float(match.group(1))
             elif 'INCL' in line:
                 # Scans specific trailing provincial configurations
-                match_incl = re.search(
-                    r'P\-HST\s*INCL\s*\$\s*(\d{1,3}\.\d{2})', line)
+                match_incl = re.search(r'P\-HST\s*INCL\s*\$\s*(\d{1,3}\.\d{2})', line)
                 if match_incl:
                     prov_tax = float(match_incl.group(1))
 
@@ -535,10 +330,10 @@ def extract_granular_taxes(raw_blob):
 
 
 def apply_global_fallbacks(std_record, raw_lines):
-    """Standardize codes, fill structural gaps, and compute math fallbacks."""
+    """Standardizes codes, fills structural gaps using raw text streams, and computes math fallbacks."""
     raw_blob = " ".join(raw_lines).upper()
 
-    # Fix the cost, quantity and unit price if they are empty
+    # Functionality A: Run regex layout text scrape if fields came up empty
     std_record = scrape_missing_metrics_from_text(std_record, raw_blob)
 
     # Get taxes
@@ -553,13 +348,10 @@ def apply_global_fallbacks(std_record, raw_lines):
         t_tax = float(std_record.get('total_tax', 0.0) or 0.0)
     except ValueError:
         f_tax, p_tax, t_tax = 0.0, 0.0, 0.0
-    if t_tax < (f_tax + p_tax) or (
-            not std_record['total_tax'] or std_record['total_tax'] == 'None'):
+    if t_tax < (f_tax + p_tax) or not std_record['total_tax'] or std_record['total_tax'] == 'None':
         std_record['total_tax'] = f"{round(f_tax + p_tax, 2)}"
-    if f_tax == 0.0 and t_tax > 0.0 and std_record['fed_tax'] is None:
-        std_record['fed_tax'] = f"{round(t_tax - p_tax, 2)}"
 
-    # Map province text blocks to 2-letter IFTA codes
+    # Functionality B: Map variable regional province text blocks to 2-letter IFTA codes
     prov_dump = std_record['province']
     if prov_dump == 'UNKNOWN' or len(prov_dump) > 2:
         if any(p in raw_blob for p in [' AB ', 'ALBERTA', 'EDMONTON',
@@ -586,7 +378,7 @@ def apply_global_fallbacks(std_record, raw_lines):
                 std_record['city'] = city_check
                 break
 
-    # Standardize missing Fuel Type strings by sweeping raw layout lines
+    # Functionality C: Standardize missing Fuel Type strings by sweeping raw layout lines
     if std_record['fuel_type'] == 'UNKNOWN':
         if 'DIESEL' in raw_blob:
             std_record['fuel_type'] = 'DIESEL'
@@ -600,37 +392,24 @@ def apply_global_fallbacks(std_record, raw_lines):
                     if gas == 'EREG':
                         std_record['fuel_grade'] = 'REGULAR'
 
-    # Mathematically deduce volume if structural fields and regex both missed it
-    if (not std_record['cost_per_litre'] or std_record['cost_per_litre'] ==
-        'None') and std_record['cost'] and std_record['quantity']:
+    # Functionality D: Mathematically deduce volume if structural fields and regex both missed it
+    if (not std_record['cost_per_litre'] or std_record['cost_per_litre'] == 'None') and std_record['cost'] and std_record['quantity']:
         try:
             tot_cost = float(std_record['cost'])
             volume = float(std_record['quantity'])
-
+            
             # Make sure we don't divide by zero or process anomalous quantities like 1
-            if volume > 0.0:
+            if volume > 0.0:  
                 calculated_unit_price = round(tot_cost / volume, 3)
                 std_record['cost_per_litre'] = f"{calculated_unit_price}"
         except ValueError:
             pass
 
     # Robust Invoice/Transaction Number Fallback
-    if (not std_record['invoice_number'] or std_record['invoice_number'] ==
-            'None'):
+    if not std_record['invoice_number'] or std_record['invoice_number'] == 'None':
         # Pattern covers: "INV No. 123", "TRANS #: 123", "TICKET # 123", or "REF #: 123"
-        inv_pattern = r"""
-           \b(?:
-                INV(?:OICE)?\.?\s*(?:No\.?)?
-                |
-                TRANS(?:\s*\#|\s*ACTION)?\.?\s*(?:No\.?)?
-                |
-                TICKET\s*\#?
-                |
-                REF(?:ERENCE)?\s*\#?
-            )
-            \s*[:\-]?\s*([A-Z0-9\-]{4,15})\b
-           """
-        inv_match = re.search(inv_pattern, raw_blob, re.IGNORECASE | re.VERBOSE)
+        inv_pattern = r'\b(?:INV(?:OICE)?\.?\s*(?:No\.?)?|TRANS(?:\s*#|\s*ACTION)?\.?\s*(?:No\.?)?|TICKET\s*#?|REF(?:ERENCE)?\s*#?)\s*[:\-]?\s*([A-Z0-9\-]{4,15})\b'
+        inv_match = re.search(inv_pattern, raw_blob, re.IGNORECASE)
         if inv_match:
             std_record['invoice_number'] = inv_match.group(1).strip()
 
@@ -643,13 +422,11 @@ def apply_global_fallbacks(std_record, raw_lines):
     # Payment Form Fallback Loop
     if not std_record['payment_form'] or std_record['payment_form'] == 'None':
         raw_upper = raw_blob.upper()
-        if 'INTERAC' in raw_upper or ('DEBIT' in raw_upper or
-                                      'CHEQUING' in raw_upper):
+        if 'INTERAC' in raw_upper or 'DEBIT' in raw_upper or 'CHEQUING' in raw_upper:
             std_record['payment_form'] = 'DEBIT'
         elif 'VISA' in raw_upper or 'UISA' in raw_upper:
             std_record['payment_form'] = 'VISA'
-        elif 'MASTERCARD' in raw_upper or ('MCARD' in raw_upper or
-                                           'MASTER' in raw_upper):
+        elif 'MASTERCARD' in raw_upper or 'MCARD' in raw_upper or 'MASTER' in raw_upper:
             std_record['payment_form'] = 'MASTERCARD'
         elif 'AMEX' in raw_upper or 'AMERICAN EXPRESS' in raw_upper:
             std_record['payment_form'] = 'AMEX'
@@ -660,23 +437,15 @@ def apply_global_fallbacks(std_record, raw_lines):
 
     # Robust Time Fallback Loop
     if not std_record['time'] or std_record['time'] == 'None' or std_record['time'] is None:
-        # Matches: "13:13:37", "19:05", or "16: 27" (handles optional spaces)
-        time_pattern = r"""
-        \b
-        ([0-1]?\d|2[0-3])
-        \s*:\s*
-        ([0-5]\d)
-        (?:\s*:\s*([0-5]\d))?
-        \b
-        """
-        time_match = re.search(time_pattern, raw_blob,
-                               re.VERBOSE | re.IGNORECASE)
-
+        # Matches: "13:13:37", "19:05", or "16: 27" (handles optional spaces and optional seconds)
+        time_pattern = r'\b([0-9]?\d)\s*:\s*([0-9]\d)(?:\s*:\s*([0-5]\d))?\b'
+        time_match = re.search(time_pattern, raw_blob)
+        
         if time_match:
             hours = time_match.group(1).zfill(2)
             minutes = time_match.group(2)
             seconds = time_match.group(3)
-
+            
             if seconds:
                 std_record['time'] = f"{hours}:{minutes}:{seconds}"
             else:
@@ -686,10 +455,10 @@ def apply_global_fallbacks(std_record, raw_lines):
 
 
 def extract_clean_record(raw_exp_data):
-    """Selects and standardizes variables."""
+    """Selects and standardizes core variables using a configuration matrix and multi-layered fallbacks.    """
     clean_records = []
     clean_confscores = []
-
+    
     # Centralized configuration mapping matrix
     field_map = {
         'invoice_number': ['INVOICE_RECEIPT_ID', 'receipt no', 'invoice no',
@@ -715,9 +484,9 @@ def extract_clean_record(raw_exp_data):
         'prov_tax':['phst included in fuel', 'fuel includes pst 7.0%'],
         'payment_form': ['PAYMENT_TYPE'],
     }
-
+    
     clean_numeric_bool = [
-        False, False, False, False, False, False,
+        False, False, False, False, False, False, 
         False, False, True, True, True, True, True, True, False]
 
     for record in raw_exp_data:
@@ -738,12 +507,12 @@ def extract_clean_record(raw_exp_data):
             'cost_per_litre': 0.0, 'cost': 0.0, 'total_tax': 0.0,
             'fed_tax': 0.0, 'prov_tax': 0.0, 'payment_form': 0.0
         }
-
+        
         curr_std_ranks = [100] * len(field_map)
-
+        
         summ_list = record.get('fields', [])
         raw_lines = record.get('raw_lines', [])
-
+        
         # Run through structural summary layout fields
         for field in summ_list:
             f_label = field['label'].strip().lower() if field['label'] else ""
@@ -754,9 +523,9 @@ def extract_clean_record(raw_exp_data):
             for i, std_key in enumerate(field_map.keys()):
                 # Update value if needed
                 updated_val, updated_conf, updated_rank = update_field_value(
-                    f_type=f_type,
-                    f_label=f_label,
-                    fval=f_value,
+                    f_type=f_type, 
+                    f_label=f_label, 
+                    fval=f_value, 
                     fconf=f_conf,
                     match_fields=field_map[std_key],
                     currstd_fval=std_record[std_key],
@@ -764,7 +533,7 @@ def extract_clean_record(raw_exp_data):
                     curr_ftype_rank=curr_std_ranks[i],
                     clean=clean_numeric_bool[i]
                 )
-
+                
                 std_record[std_key] = updated_val
                 confidence_scores[std_key] = updated_conf
                 curr_std_ranks[i] = updated_rank
@@ -779,91 +548,14 @@ def extract_clean_record(raw_exp_data):
             if clean_confscores else pd.DataFrame()))
 
 
-def standardize_df_columns(data_df, file_cols, filequant='distance'):
-    """
-    Maps raw extracted column names to standard schema column names
-    using a fuzzy alias lookup before falling back to NaN for
-    genuinely missing columns.
-
-    Matching is case-insensitive and whitespace-normalized so that
-    'AB KMs', 'ab kms', 'AB Kms' all map correctly to 'ab_kms'.
-
-    Prints a diagnostic report showing what was matched, renamed,
-    and filled with NaN — useful for debugging new source files.
-    """
-    alias_map = (DISTANCE_COLUMN_ALIASES if filequant == 'distance'
-                 else INVOICE_COLUMN_ALIASES)
-
-    # Normalize incoming column names for matching
-    # Keep original names for the actual rename operation
-    normalized_to_original = {
-        col.lower().strip().replace('_', ' '): col
-        for col in data_df.columns
-    }
-
-    rename_map   = {}   # original_name → standard_name
-    matched      = []   # Columns already matched
-    renamed      = []   # Renamed columns
-    filled_nan   = []   # Missing columns filled with NaN
-
-    for std_col in file_cols:
-        if std_col == 'source_file':
-            continue  # always added separately in readfile_to_df
-
-        # Check if standard name already exists exactly
-        if std_col in data_df.columns:
-            matched.append(std_col)
-            continue
-
-        # Normalize and look up in alias map
-        found = False
-        for norm_col, orig_col in normalized_to_original.items():
-            mapped = alias_map.get(norm_col)
-            if mapped == std_col and orig_col not in rename_map:
-                rename_map[orig_col] = std_col
-                renamed.append(f"'{orig_col}' → '{std_col}'")
-                found = True
-                break
-
-        if not found:
-            filled_nan.append(std_col)
-
-    # Apply renames
-    data_df = data_df.rename(columns=rename_map)
-
-    # Fill genuinely missing columns with NaN
-    for col in filled_nan:
-        data_df[col] = np.nan
-
-    # Reindex to standard column order, dropping any extra columns
-    data_df = data_df.reindex(columns=file_cols)
-
-    # Diagnostic report
-    print(f"\n   Column standardization report ({filequant}):")
-    if matched:
-        print(f"      Exact match  ({len(matched)}): {matched}")
-    if renamed:
-        print(f"      Renamed      ({len(renamed)}): {renamed}")
-    if filled_nan:
-        print(f"      Filled NaN   ({len(filled_nan)}): {filled_nan}")
-
-    return data_df
-
-
-
-
 def clean_and_standardize_dataframe(df):
-    """Standardize dataframe values."""
     clean_df = df.copy()
-
+    
     # 1. FORCE UNIFORM STRING CLEANING FOR DATE AND TIME
-    clean_df['date'] = clean_df['date'].astype(str).str.replace(
-        r'\s+', ' ', regex=True).str.strip()
-    clean_df['time'] = clean_df['time'].astype(str).str.replace(
-        r'(\d+):\s+(\d+)', r'\1:\2', regex=True).str.strip()
-    clean_df['time'] = clean_df['time'].str.replace(
-        r'^(\d{2}:\d{2})$', r'\1:00', regex=True)
-
+    clean_df['date'] = clean_df['date'].astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
+    clean_df['time'] = clean_df['time'].astype(str).str.replace(r'(\d+):\s+(\d+)', r'\1:\2', regex=True).str.strip()
+    clean_df['time'] = clean_df['time'].str.replace(r'^(\d{2}:\d{2})$', r'\1:00', regex=True)
+    
     # Fix specific typos
     clean_df['date'] = clean_df['date'].str.replace('2016- 33 16', '2016/03/16', regex=False)
     clean_df['date'] = clean_df['date'].str.replace('2025/11/38', '2025/11/30', regex=False)
@@ -872,7 +564,7 @@ def clean_and_standardize_dataframe(df):
 
     # 2. PARSE UNIFIED DATETIME TIMESTAMP
     clean_df['timestamp'] = pd.to_datetime(
-        clean_df['date'] + ' ' + clean_df['time'],
+        clean_df['date'] + ' ' + clean_df['time'], 
         format='%Y/%m/%d %H:%M:%S',
         errors='coerce'
     )
@@ -880,37 +572,35 @@ def clean_and_standardize_dataframe(df):
     clean_df['time'] = clean_df['timestamp'].dt.strftime('%H:%M:%S')
 
     # 3. CLEAN TEXT FIELDS WITH CUSTOM HYPHEN/SPACE RULES
-    text_columns = ['vendor_name', 'city', 'province', 'invoice_number',
-                    'fuel_grade', 'payment_form']
+    text_columns = ['vendor_name', 'city', 'province', 'invoice_number', 'fuel_grade', 'payment_form']
     for col in text_columns:
         if col in clean_df.columns:
-            clean_df[col] = (
-                clean_df[col].astype(str).str.replace(
-                    r'-', ' ', regex=False) # Hyphens to spaces
-                .str.replace(r'\s+', ' ',
-                             regex=True)  # Shink double space new line etc.
-
-                .str.strip()              # Strip leading/trailing whitespace
-                .replace({'None': np.nan, 'NONE': np.nan, 'nan': np.nan,
-                          '': np.nan}))
-
+            clean_df[col] = (clean_df[col].astype(str)
+                             .str.replace(r'[\r\n]+', ' ', regex=True) # Wipes out raw newlines
+                             .str.strip()                             # Drops leading/trailing spaces
+                             .str.strip('-')                          # Drops leading/trailing hyphens
+                             .str.replace(r'-', ' ', regex=False)     # Converts middle hyphens to spaces
+                             .str.replace(r'\s+', ' ', regex=True)     # Shrinks any resulting double spaces
+                             .str.strip()                             # Final safety strip
+                             .replace({'None': np.nan, 'NONE': np.nan, 'nan': np.nan, '': np.nan}))
+            
     # 4. FORCE NUMERIC FIELDS TO FLOATS
     numeric_columns = ['quantity', 'cost_per_litre', 'cost', 'total_tax', 'fed_tax', 'prov_tax']
     for col in numeric_columns:
         if col in clean_df.columns:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce')
-
+            
     # 5. ENFORCE SYSTEM CONSISTENCY RULES
     clean_df.loc[clean_df['quantity'] == 1.0, 'quantity'] = np.nan
-
+    
     # Sort chronologically by your new timestamp
     clean_df = clean_df.sort_values(by='timestamp').reset_index(drop=True)
-
+    
     return clean_df
 
 
 def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
-    """Extract images, run Textractor, and return cleaned dataframe."""
+    """"""
     temp_imgdir = Path(temp_imgdir)
     temp_imgdir.mkdir(parents=True, exist_ok=True)
 
@@ -920,7 +610,7 @@ def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
         if not image_paths:
             return pd.DataFrame()
 
-        # Run Textractor
+        #Run Textractor
         raw_data = process_images_textractor(image_paths)
         invoice_dataframe, inv_conf_scores = extract_clean_record(raw_data)
         return (clean_and_standardize_dataframe(invoice_dataframe),
@@ -936,143 +626,158 @@ def run_textractor_docx_invoices(docxfile, temp_imgdir='./temp', debug=False):
                 print('Temp. folder not deleted given debug status')
 
 
-def clean_dataframe(df_uncleaned, conf_df_uncleaned=None):
-    """Remove all empty  and duplicate rows"""
-    if df_uncleaned.empty:
-        return df_uncleaned, conf_df_uncleaned
-    # Remove empty rows
+def clean_dataframe(df_uncleaned):
+    """Remove all empty rows"""
     df_uncleaned = df_uncleaned.replace(r'^\s*$', pd.NA, regex=True)
-    valid_row_mask = df_uncleaned.notna().any(axis=1)
-    df_cleaned = df_uncleaned[valid_row_mask]
-
-    # Remove duplicates
+    df_cleaned = df_uncleaned.dropna(how='all')
     is_duplicate = df_cleaned.astype(str).duplicated()
     df_cleaned = df_cleaned[~is_duplicate].reset_index(drop=True)
-    if conf_df_uncleaned is not None:
-        conf_df_cleaned = conf_df_uncleaned[valid_row_mask]
-        conf_df_cleaned = conf_df_cleaned[~is_duplicate].reset_index(drop=True)
-    return df_cleaned, conf_df_cleaned
+    return df_cleaned
 
 
-def readfile_to_df(localfile, filequant='distance', truck_number=0):
-    """Read one file and return pandas dataframe."""
-    # Initialize targeted empty layouts matching your required structural elements perfectly
-    invoice_columns = [
-        'invoice_number', 'date', 'time', 'vendor_name', 'city', 'province',
-        'fuel_type', 'fuel_grade', 'quantity', 'cost_per_litre', 'cost', 
-        'total_tax', 'fed_tax', 'prov_tax', 'payment_form', 'source_file'
-    ]
-
-    distance_columns = [
-        'trip_date', 'trip_origin', 'trip_destination', 'trip_start_time', 'trip_end_time',
-        'start_odometer', 'end_odometer', 'distance_km', 'vin_or_truck_number',
-        'ab_kms', 'bc_kms', 'sk_kms', 'mb_kms', 'on_kms',
-        'ab_fuel', 'bc_fuel', 'sk_fuel', 'mb_fuel', 'on_fuel', 'source_file'
-    ]
-    filetype = check_file(localfile)
+def get_dataframe_onefile(datafile):
+    """Extract tables from Excel file."""
+    filetype = check_file(datafile)
     if not filetype:
-        raise ValueError("File extension not found.")
-
-    if filequant == 'distance':
-        std_cols = distance_columns
-    elif filequant == 'invoice':
-        std_cols = invoice_columns
-    else:
-        raise ValueError("Filequant can only be 'distance' of 'invoice'")
-
-    if filetype in ['.docx', '.doc']:
-        datatable_df, conf_scores_df = run_textractor_docx_invoices(localfile)
-        if filequant == 'distance':
-            print("Warning: DOCX files are expected to be invoices.")
-            print("Changing filequant to 'invoice' for this file.")
-            filequant = 'invoice'
-    elif filetype == '.pdf':
-        pdf_pagecount = len(PdfReader(localfile).pages)
-        if pdf_pagecount == 1:
-            pdf_tables = run_textract_smallpdf(localfile)
-        else:
-            pdf_tables = run_textract_largepdf(
-                localfile)
-        datatable_df, conf_scores_df = get_df_from_textract_tables(
-            pdf_tables, column_names_everytable=True)
-    elif filetype in ['.xlsx', '.xls']:
-        datatable_df = pd.read_excel(localfile)
-        conf_scores_df = pd.DataFrame(
-            np.ones_like(datatable_df.values, dtype=float)*100.,
-            columns=datatable_df.columns)
+        raise ValueError("File not found.")
+    # Check if file can be read by pandas read_table
+    if filetype == '.xlsx' or filetype == '.xls':
+        data_table = pd.read_excel(datafile)
     elif filetype == '.csv':
-        datatable_df = pd.read_csv(localfile)
-        conf_scores_df = pd.DataFrame(
-            np.ones_like(datatable_df.values, dtype=float)*100.,
-            columns=datatable_df.columns)
+        data_table = pd.read_csv(datafile)
+    elif filetype == '.pdf':
+        pdf_pagecount = len(PdfReader(datafile).pages)
+        if pdf_pagecount == 1:
+            tables = run_textract_smallpdf(datafile)
+        else:
+            tables = run_textract_largepdf(datafile)
+        data_table = get_df_from_textract_tables(
+            tables, column_names_everytable=True)
+    elif filetype == '.docx' or filetype == '.doc':
+        data_table, conf_scores = run_textractor_docx_invoices(
+            datafile)
+        conf_scores.to_excel('Data/Invoice_conf_scores.xlsx')
+        # code to load docx table as dataframe
     else:
-        print("Files can only be PDF, EXCEL, CSV or DOC/DOCX")
-        raise ValueError(f"No support for file type: {filetype}")
-
-    datatable_df['source_file'] = Path(localfile).name
-    conf_scores_df['source_file'] = 100.0
-    if filequant == 'distance' and (
-            'vin_or_truck_number' not in datatable_df.columns or
-            datatable_df['vin_or_truck_number'].isna().all()):
-        datatable_df['vin_or_truck_number'] = truck_number
-        conf_scores_df['vin_or_truck_number'] = 100.0
-
-    # Cleaning
-    df_cleaned, conf_cleaned = clean_dataframe(datatable_df, conf_scores_df)
-    df_standardized = standardize_df_columns(df_cleaned, std_cols, filequant)
-    conf_standardized = standardize_df_columns(conf_cleaned, std_cols,
-                                               filequant)
-
-    return (df_standardized, conf_standardized)
-
-def run_cloud_extraction_pipeline(
-        file_list, file_quant_list=None,
-        truck_number_list=None,
-        outtable_folder="../extracted_tables",
-        outconf_folder="../extracted_conf_scores",):
-    """
-    Automated main execution pipeline block. Dispatches files to your 
-    existing parsing engine and saves standardized csv rows directly to S3.
-    """
-    if file_quant_list is None:
-        file_quant_list = ['distance', 'distance', 'invoice']
-
-    dftables_list = []
-    conf_scores_list = []
-    count = 0
-    if truck_number_list is None:
-        truck_number_list = np.arange(1, len(file_list)+1)
-    for local_file, doctype in zip(file_list, file_quant_list):
-        # Extract dataframe and confidence scores from local files
-        df_table, conf_scores = readfile_to_df(
-            local_file, doctype,
-            truck_number=truck_number_list[count])
-        df_table.to_csv(f"{outtable_folder}/{doctype}_{count}.csv",
-                        index=False, sep='|', header=True, lineterminator='\n')
-        conf_scores.to_csv(
-            f"{outconf_folder}/{doctype}_{count}_conf_scores.csv",
-            index=False, sep='|', header=True, lineterminator='\n')
-        dftables_list.append(df_table)
-        conf_scores_list.append(conf_scores)
-        count += 1
-
-    return dftables_list, conf_scores_list
+        print('Can only read excel, csv, pdf and .docx')
+        data_table = pd.DataFrame()
+    return clean_dataframe(data_table)
 
 
-# --- Execution Entry Point ---
-if __name__ == "__main__":
-    # Define your specific operational files
-    target_files = [
-        "../Data/Distance log 1.xlsx",
-        "../Data/Distance log 2.pdf",
-        "../Data/Fuel Invoices.docx"
-    ]
+def clean_distance_log(log_path):
+    # Load the uploaded distance log file
+    df_log = pd.read_csv(log_path)
+    
+    # Standardize empty strings or spaces in names
+    df_log['Origin'] = df_log['Origin'].str.strip()
+    df_log['Destination'] = df_log['Destination'].str.strip()
+    
+    # Fix the mixed/irregular date formatting strings dynamically
+    # This natively reads configurations like 'Jan 7 2023', '2016-03-16', and '03-06-2016'
+    df_log['trip_date'] = pd.to_datetime(df_log['Date'].str.strip(), errors='coerce')
+    
+    # Drop rows that don't have valid dates since we can't align them chronologically
+    df_log = df_log.dropna(subset=['trip_date'])
+    
+    # Set up a timestamp anchor for the merge (defaulting to the start of the log day)
+    df_log['timestamp'] = df_log['trip_date']
+    
+    return df_log.sort_values('timestamp')
 
-    file_types = ['distance', 'distance', 'invoice']
-
-    run_cloud_extraction_pipeline(
-        file_list=target_files,
-        file_quant_list=file_types,
-        outtable_folder="../output_tables",
-        outconf_folder="../output_tables"
+def merge_invoices_with_distance_logs(df_clean_invoices, clean_log_path):
+    # 1. Clean and fetch the distance logging profiles
+    df_log = clean_distance_log(clean_log_path)
+    
+    # 2. Ensure your invoice dataframe is explicitly sorted by its unified timestamp
+    df_inv = df_clean_invoices.sort_values('timestamp')
+    
+    # 3. Execute an asof merge mapping by date proximity matching backwards
+    # This links the transaction to the closest recorded trip on or right before that date
+    merged_df = pd.merge_asof(
+        df_inv,
+        df_log,
+        on='timestamp',
+        by='province',  # CRITICAL: Ensures the invoice province matches the log jurisdiction destination profile
+        direction='nearest'
     )
+    
+    # 4. Generate and Map the Explicitly Requested Evaluation Columns
+    merged_df['trip_origin'] = merged_df['Origin']
+    merged_df['trip_destination'] = merged_df['Destination']
+    merged_df['start_odometer'] = merged_df['Start_Odometer']
+    merged_df['end_odometer'] = merged_df['End_Odometer']
+    merged_df['distance_km'] = merged_df['Distance_km']
+    
+    # Set default tracking flags for fields missing from the physical log copies
+    merged_df['trip_start_time'] = 'UNKNOWN'
+    merged_df['trip_end_time'] = 'UNKNOWN'
+    merged_df['VIN_or_truck_number'] = 'FLEET_UNIT_01'
+    
+    # Determine distance traveled by jurisdiction dynamically based on log maps
+    # If the trip ended in the matching invoice province, assign the full distance to it
+    merged_df['distance_traveled_by_jurisdiction'] = merged_df.apply(
+        lambda r: f"{r['province']}: {r['distance_km']} km" if pd.notna(r['distance_km']) else "UNKNOWN", 
+        axis=1
+    )
+    
+    # 5. Drop intermediate duplicate columns to keep the output pristine
+    columns_to_drop = ['Origin', 'Destination', 'Start_Odometer', 'End_Odometer', 'Distance_km', 'Date']
+    merged_df = merged_df.drop(columns=[c for c in columns_to_drop if c in merged_df.columns])
+    
+    return merged_df
+
+
+def compile_master_distance_log(df_log1_raw, df_log2_raw):
+    # --- PROCESS DISTANCE LOG 1 (Spreadsheet) ---
+    log1 = df_log1_raw.copy()
+    log1_clean = pd.DataFrame()
+    
+    # Safely handle potential variations in column naming
+    log1_clean['date'] = pd.to_datetime(log1['Date'])
+    log1_clean['trip_origin'] = log1['Origin'].astype(str).str.strip()
+    log1_clean['trip_destination'] = log1['Destination'].astype(str).str.strip()
+    log1_clean['start_odometer'] = pd.to_numeric(log1['Start_Odometer'], errors='coerce')
+    log1_clean['end_odometer'] = pd.to_numeric(log1['End_Odometer'], errors='coerce')
+    log1_clean['distance_km'] = pd.to_numeric(log1['Distance_km'], errors='coerce')
+    
+    # Initialize empty jurisdiction columns for Log 1
+    juris_cols = ['AB KMs', 'BC KMs', 'SK KMs', 'MB KMs', 'ON KMs', 'QC KMs', 'YT KMs',
+                  'AB Fuel', 'BC Fuel', 'SK Fuel', 'MB Fuel', 'ON Fuel', 'QC Fuel']
+    for col in juris_cols:
+        log1_clean[col] = np.nan
+
+    # --- PROCESS DISTANCE LOG 2 (Textractor DataFrame) ---
+    log2 = df_log2_raw.copy()
+    log2_clean = pd.DataFrame()
+    
+    # Fix the YY date formats (e.g., '02/5/22' -> 2022-05-02)
+    log2_clean['date'] = pd.to_datetime(log2['DATE'].astype(str).str.strip(), format='%d/%m/%y', errors='coerce')
+    log2_clean['trip_origin'] = log2['STARTING POINT'].astype(str).str.strip()
+    log2_clean['trip_destination'] = log2['DESTINATION'].astype(str).str.strip()
+    log2_clean['start_odometer'] = pd.to_numeric(log2['START KM'], errors='coerce')
+    log2_clean['end_odometer'] = pd.to_numeric(log2['END KM'], errors='coerce')
+    log2_clean['distance_km'] = pd.to_numeric(log2['TOTAL KM'], errors='coerce')
+    
+    # Direct pass-through for the detailed IFTA metrics
+    for col in juris_cols:
+        if col in log2.columns:
+            log2_clean[col] = pd.to_numeric(log2[col], errors='coerce')
+            
+    # --- COMBINE AND CLEAN ---
+    # Merge both tables vertically
+    df_master_log = pd.concat([log1_clean, log2_clean], ignore_index=True)
+    
+    # Drop rows that don't have valid dates or odometer entries
+    df_master_log = df_master_log.dropna(subset=['date', 'start_odometer'])
+    
+    # Apply your custom string rules: drop hyphens at edges, switch interior hyphens to spaces
+    for col in ['trip_origin', 'trip_destination']:
+        df_master_log[col] = (df_master_log[col]
+                              .str.strip('- ')
+                              .str.replace('-', ' ', regex=False)
+                              .str.replace(r'\s+', ' ', regex=True))
+        
+    # Sort chronologically so pd.merge_asof can look back through time correctly
+    df_master_log = df_master_log.sort_values(by='date').reset_index(drop=True)
+    
+    return df_master_log

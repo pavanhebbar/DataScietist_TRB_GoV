@@ -1,0 +1,22 @@
+trip_date|trip_origin|trip_destination|trip_start_time|trip_end_time|start_odometer|end_odometer|distance_km|vin_or_truck_number|ab_kms|bc_kms|sk_kms|mb_kms|on_kms|ab_fuel|bc_fuel|sk_fuel|mb_fuel|on_fuel|source_file
+|Brandon|Saskatoon|||100000|100659|659|1|||||||||||Distance log 1.xlsx
+2025-11-30 00:00:00|Winnipeg|Brandon|||62845|63060|215|1|||||||||||Distance log 1.xlsx
+03-06-2016|Edmonton|Kelowna|||92604|93179|575|1|||||||||||Distance log 1.xlsx
+2020-08-23 00:00:00|Lankey |Burnaby|||41908|41938|30|1|||||||||||Distance log 1.xlsx
+|Brandon|Barrie|||128412|130112|1700|1|||||||||||Distance log 1.xlsx
+2023-06-21 00:00:00|Willowdale|Caledon|||78955|79035|80|1|||||||||||Distance log 1.xlsx
+Jan 7 2023|Kelowna|Langley|||247330|247720|390|1|||||||||||Distance log 1.xlsx
+|Red Deer|Regina|||104148|104938|790|1|||||||||||Distance log 1.xlsx
+|Regina|Winnipeg|||104938|105510|572|1|||||||||||Distance log 1.xlsx
+2021-05-08 00:00:00|Barrie, ON|Willowdale, ON|||211390|211480|90|1|||||||||||Distance log 1.xlsx
+|Thunder Bay|Kingston|||106212|106837|1625|1|||||||||||Distance log 1.xlsx
+2024-04-11 00:00:00|Red Deer, AB|Edmonton, AB|||156742|156887|145|1|||||||||||Distance log 1.xlsx
+|Sudbury|Thunder Bay|||107470|108471|1001|1|||||||||||Distance log 1.xlsx
+|Thunder Bay|Brandon|||108471|109615|1144|1|||||||||||Distance log 1.xlsx
+|Brandon|Prince Albert|||109615|110274|659|1|||||||||||Distance log 1.xlsx
+|Prince Albert|Edmonton|||110274|110840|566|1|||||||||||Distance log 1.xlsx
+2016-03-16 00:00:00|Caledon|Red Deer|||305118|308368|3250|1|||||||||||Distance log 1.xlsx
+2016-05-04 00:00:00|Langley|Burnaby|||41908|41938|30|1|||||||||||Distance log 1.xlsx
+2016-04-30 00:00:00|Burnaby|Lankey|||189560|189645|85|1|||||||||||Distance log 1.xlsx
+10-08-2022|Brooks|Edmanton, AB|||125420|125918|450|1|||||||||||Distance log 1.xlsx
+2022-08-15 00:00:00|Consart, AB|Kamloops, BC|||285000|285990|990|1|||||||||||Distance log 1.xlsx
