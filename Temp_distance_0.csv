@@ -1,0 +1,22 @@
+,trip_date,trip_origin,trip_destination,trip_start_time,trip_end_time,start_odometer,end_odometer,distance_km,vin_or_truck_number,ab_kms,bc_kms,sk_kms,mb_kms,on_kms,ab_fuel,bc_fuel,sk_fuel,mb_fuel,on_fuel,source_file
+0,,Brandon,Saskatoon,,,100000,100659,659,,,,,,,,,,,,Distance log 1.xlsx
+1,2025-11-30 00:00:00,Winnipeg,Brandon,,,62845,63060,215,,,,,,,,,,,,Distance log 1.xlsx
+2,03-06-2016,Edmonton,Kelowna,,,92604,93179,575,,,,,,,,,,,,Distance log 1.xlsx
+3,2020-08-23 00:00:00,Lankey ,Burnaby,,,41908,41938,30,,,,,,,,,,,,Distance log 1.xlsx
+4,,Brandon,Barrie,,,128412,130112,1700,,,,,,,,,,,,Distance log 1.xlsx
+5,2023-06-21 00:00:00,Willowdale,Caledon,,,78955,79035,80,,,,,,,,,,,,Distance log 1.xlsx
+6,Jan 7 2023,Kelowna,Langley,,,247330,247720,390,,,,,,,,,,,,Distance log 1.xlsx
+7,,Red Deer,Regina,,,104148,104938,790,,,,,,,,,,,,Distance log 1.xlsx
+8,,Regina,Winnipeg,,,104938,105510,572,,,,,,,,,,,,Distance log 1.xlsx
+9,2021-05-08 00:00:00,"Barrie, ON","Willowdale, ON",,,211390,211480,90,,,,,,,,,,,,Distance log 1.xlsx
+10,,Thunder Bay,Kingston,,,106212,106837,1625,,,,,,,,,,,,Distance log 1.xlsx
+11,2024-04-11 00:00:00,"Red Deer, AB","Edmonton, AB",,,156742,156887,145,,,,,,,,,,,,Distance log 1.xlsx
+12,,Sudbury,Thunder Bay,,,107470,108471,1001,,,,,,,,,,,,Distance log 1.xlsx
+13,,Thunder Bay,Brandon,,,108471,109615,1144,,,,,,,,,,,,Distance log 1.xlsx
+14,,Brandon,Prince Albert,,,109615,110274,659,,,,,,,,,,,,Distance log 1.xlsx
+15,,Prince Albert,Edmonton,,,110274,110840,566,,,,,,,,,,,,Distance log 1.xlsx
+16,2016-03-16 00:00:00,Caledon,Red Deer,,,305118,308368,3250,,,,,,,,,,,,Distance log 1.xlsx
+17,2016-05-04 00:00:00,Langley,Burnaby,,,41908,41938,30,,,,,,,,,,,,Distance log 1.xlsx
+18,2016-04-30 00:00:00,Burnaby,Lankey,,,189560,189645,85,,,,,,,,,,,,Distance log 1.xlsx
+19,10-08-2022,Brooks,"Edmanton, AB",,,125420,125918,450,,,,,,,,,,,,Distance log 1.xlsx
+20,2022-08-15 00:00:00,"Consart, AB","Kamloops, BC",,,285000,285990,990,,,,,,,,,,,,Distance log 1.xlsx
