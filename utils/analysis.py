@@ -389,7 +389,7 @@ def run_unsupervised_anomaly_detection(df_pool, contamination_rate=0.03):
     print(f"   👉 Verified {len(df_validated_clean)} clean operational runs.")
     
     # Call corrected global plot using the calculated drivers ledger directly
-    df_importance = calculate_global_importance(df_statistical, features)
+    df_importance = calculate_global_importance(df_statistical)
     
     return df_validated_clean, df_statistical, df_importance
 
